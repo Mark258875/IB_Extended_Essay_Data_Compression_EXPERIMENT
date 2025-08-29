@@ -1,8 +1,9 @@
 {
-  "timestamp": 1756474757.3335016,
+  "timestamp": 1756473866.0644877,
   "python_version": "3.10.2",
   "platform": "Windows-10-10.0.19045-SP0",
   "input_globs": [
+    "./data/*.txt",
     "./data/binary/**/*.txt",
     "./data/binary/**/*.bin"
   ],

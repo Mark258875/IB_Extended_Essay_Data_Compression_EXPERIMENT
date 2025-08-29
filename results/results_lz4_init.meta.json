@@ -1,14 +1,13 @@
 {
-  "timestamp": 1756474757.3335016,
+  "timestamp": 1756466649.1310484,
   "python_version": "3.10.2",
   "platform": "Windows-10-10.0.19045-SP0",
   "input_globs": [
-    "./data/binary/**/*.txt",
-    "./data/binary/**/*.bin"
+    "./data/*.txt"
   ],
-  "output_csv": "results\\results_brotli.csv",
+  "output_csv": "results\\results_lz4.csv",
   "sweep": {
-    "qualities": [
+    "lz4_levels": [
       0,
       1,
       2,
@@ -20,12 +19,13 @@
       8,
       9,
       10,
-      11
+      11,
+      12,
+      13,
+      14,
+      15,
+      16
     ]
-  },
-  "brotli_base": {
-    "mode": "text",
-    "lgwin": null
   },
   "repeats": 5,
   "warmup": 1,
@@ -37,7 +37,7 @@
     "PyYAML": "6.0.2",
     "psutil": "7.0.0",
     "py-cpuinfo": "9.0.0",
-    "brotli": "1.1.0"
+    "lz4": "4.4.4"
   },
   "cpu": {
     "logical_cores": 16,

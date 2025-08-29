@@ -1,6 +1,6 @@
 paths:
   input_globs:
-    - "./data/*.txt"
+    #- "./data/*.txt"
     - "./data/binary/**/*.txt"   # ascii01
     - "./data/binary/**/*.bin"   # bitpack
 
