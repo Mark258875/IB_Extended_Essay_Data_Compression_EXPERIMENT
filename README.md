@@ -242,4 +242,4 @@ data/binary/
 
 ## License
 
-MIT (or your preference).
+@ All rights reserved
