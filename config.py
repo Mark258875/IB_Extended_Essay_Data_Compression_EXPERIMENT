@@ -12,12 +12,23 @@ _VALID_MODES = {"generic", "text", "font"}
 class Paths:
     input_globs: List[str]
     output_dir: str = "./results"
-    output_filename: str = "brotli_results.csv"
+    # Prefer per-alg outputs; kept backward-compat with legacy output_filename
+    output_brotli: str = "results_brotli.csv"
+    output_lz4: str = "results_lz4.csv"
 
-    def output_path(self) -> Path:
+    def _ensure_dir(self) -> Path:
         outdir = Path(self.output_dir)
         outdir.mkdir(parents=True, exist_ok=True)
-        return outdir / self.output_filename
+        return outdir
+
+    def output_path_for(self, alg: str) -> Path:
+        outdir = self._ensure_dir()
+        if alg.lower() == "brotli":
+            return outdir / self.output_brotli
+        if alg.lower() == "lz4":
+            return outdir / self.output_lz4
+        # Fallback: unknown alg -> put in generic results.csv
+        return outdir / "results.csv"
 
 @dataclass
 class BrotliCfg:
@@ -62,11 +73,19 @@ class Config:
         input_globs = d.get("input_globs")
         if not input_globs or not isinstance(input_globs, list):
             raise ValueError("paths.input_globs must be a non-empty list of glob patterns.")
+
+        # Back-compat: if legacy 'output_filename' is present, use it for both
+        legacy = d.get("output_filename")
+        output_brotli = str(d.get("output_brotli", legacy if legacy else "results_brotli.csv"))
+        output_lz4    = str(d.get("output_lz4",    legacy if legacy else "results_lz4.csv"))
+
         return Paths(
             input_globs=[str(p) for p in input_globs],
             output_dir=str(d.get("output_dir", "./results")),
-            output_filename=str(d.get("output_filename", "brotli_results.csv")),
+            output_brotli=output_brotli,
+            output_lz4=output_lz4,
         )
+
 
     @staticmethod
     def _parse_brotli(d: Dict[str, Any]) -> BrotliCfg:
@@ -114,5 +133,7 @@ class Config:
             warmup=self.timing.warmup,
         )
 
-    def output_csv_path(self) -> Path:
-        return self.paths.output_path()
+
+    def output_csv_path_for(self, alg: str) -> Path:
+        return self.paths.output_path_for(alg)
+

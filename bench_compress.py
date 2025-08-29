@@ -80,36 +80,39 @@ def gen_zipf(size: int, s: float, seed: Optional[int]) -> bytes:
     return bytes(out)
 
 # ---------- Brotli wrapper + single-ALG runner ----------
-
-def compress_brotli(data: bytes, quality: int = 6,
-                    mode: Optional[str] = None,
-                    window: Optional[int] = None) -> Tuple[bytes, float, float, Dict]:
+def compress_brotli(data: bytes, args) -> Tuple[bytes, float, float, Dict]:
+    """Compress+decompress once and return (comp_bytes, comp_time, decomp_time, params)."""
     if brotli is None:
         raise RuntimeError("brotli package not installed. pip install brotli")
-    kwargs = {"quality": quality}
-    if mode:
+
+    q = int(getattr(args, "brotli_q", 6))
+    mode = (getattr(args, "brotli_mode", "generic") or "generic").lower()
+    lgwin = getattr(args, "brotli_lgwin", None)
+
+    kwargs = {"quality": q}
+    if mode in {"generic", "text", "font"}:
         kwargs["mode"] = {
             "generic": brotli.MODE_GENERIC,
             "text": brotli.MODE_TEXT,
-            "font": brotli.MODE_FONT
-        }.get(mode, brotli.MODE_GENERIC)
-    # ⬇⬇ important: only include lgwin if not None
-    if window is not None:
-        kwargs["lgwin"] = window
+            "font": brotli.MODE_FONT,
+        }[mode]
+    if lgwin is not None:
+        kwargs["lgwin"] = int(lgwin)
+
     comp, comp_s = time_op(brotli.compress, data, **kwargs)
     decomp, decomp_s = time_op(brotli.decompress, comp)
     assert decomp == data
-    params = {"quality": quality, "mode": mode or "generic", "lgwin": window if window is not None else "default"}
+
+    params = {"quality": q, "mode": mode, "lgwin": lgwin if lgwin is not None else "default"}
     return comp, comp_s, decomp_s, params
 
 def compress_lz4(data: bytes, args):
     if lz4 is None:
         raise RuntimeError("lz4 package not installed. pip install lz4")
-
-    comp, comp_s = time_op(lz4.compress, data, compression_level=args.lz4_level)
+    comp, comp_s = time_op(lz4.compress, data, compression_level=int(args.lz4_level))
     decomp, decomp_s = time_op(lz4.decompress, comp)
     assert decomp == data
-    params = {"level": args.lz4_level}
+    params = {"level": int(args.lz4_level)}
     return comp, comp_s, decomp_s, params
 
 def _percentile(xs, p):
@@ -123,38 +126,44 @@ def _percentile(xs, p):
     return xs[f] + (xs[c] - xs[f]) * (k - f)
 
 def run_one(dataset_label: str, data: bytes, alg: str, args):
-    # This function is now generalized!
     compress_fn = {
         "brotli": compress_brotli,
-        "lz4": compress_lz4
+        "lz4": compress_lz4,
     }.get(alg)
-
     if compress_fn is None:
         raise ValueError(f"Unknown algorithm: {alg}")
 
     H = entropy_bpb(data)
     original = len(data)
-    
-    # Warm-up (run once before timing)
-    comp, _, _, _ = compress_fn(data, args)
-    
+
+    # Warm-up
+    warm = max(0, getattr(args, "warmup", 1))
+    for _ in range(warm):
+        compress_fn(data, args)
+
     comp_times, decomp_times = [], []
     repeats = max(1, args.repeats)
+
+    last_comp = None
+    last_params = None
     for _ in range(repeats):
-        # We only need to time the operations here
-        _, ct = time_op(compress_fn, data, args)
-        # Re-use the compressed data from the warm-up to time decompression
-        _, dt = time_op({ "brotli": brotli.decompress, "lz4": lz4.decompress }.get(alg), comp)
+        comp, ct, _, params = compress_fn(data, args)
+        _, dt = time_op({"brotli": brotli.decompress, "lz4": lz4.decompress}[alg], comp)
         comp_times.append(ct)
         decomp_times.append(dt)
+        last_comp = comp
+        last_params = params
 
     ct_med = statistics.median(comp_times)
     dt_med = statistics.median(decomp_times)
-    
-    # The rest of the function remains largely the same, just get params at the end
-    _, _, _, params = compress_fn(data, args) # Run one last time to get the params dict
 
-    compressed = len(comp)
+    comp_MB_s   = (original / MB)  / ct_med if ct_med > 0 else float("inf")
+    decomp_MB_s = (original / MB)  / dt_med if dt_med > 0 else float("inf")
+    comp_MiB_s  = (original / MiB) / ct_med if ct_med > 0 else float("inf")
+    decomp_MiB_s= (original / MiB) / dt_med if dt_med > 0 else float("inf")
+
+
+    compressed = len(last_comp)
     ratio = compressed / original if original else 0.0
     bpb = 8.0 * ratio if original else 0.0
     over = ((bpb - H) / H * 100.0) if H > 0 else None
@@ -163,8 +172,8 @@ def run_one(dataset_label: str, data: bytes, alg: str, args):
 
     row = {
         "dataset": dataset_label,
-        "alg": alg, # <-- now dynamic
-        "params": json.dumps(params, sort_keys=True),
+        "alg": alg,
+        "params": json.dumps(last_params, sort_keys=True),
         "original_bytes": original,
         "compressed_bytes": compressed,
         "ratio": ratio,
@@ -176,10 +185,17 @@ def run_one(dataset_label: str, data: bytes, alg: str, args):
         "decomp_time_s": dt_med,
         "decomp_MB_s": decomp_MB_s,
         "repeats": repeats,
+        "comp_time_s": ct_med,
+        "comp_MB_s": comp_MB_s,
+        "comp_MiB_s": comp_MiB_s,
+        "decomp_time_s": dt_med,
+        "decomp_MB_s": decomp_MB_s,
+        "decomp_MiB_s": decomp_MiB_s, 
         "env_python": platform.python_version(),
         "env_platform": platform.platform(),
     }
     return row
+
 
 def write_csv(rows, path: Path, append: bool = False):
     if not rows:
