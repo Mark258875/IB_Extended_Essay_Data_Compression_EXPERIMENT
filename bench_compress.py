@@ -9,6 +9,11 @@ try:
 except Exception:
     brotli = None
 
+try:
+    import lz4.frame as lz4
+except ImportError:
+    lz4 = None
+
 MB = 1_000_000.0  # decimal MB for throughput (MB/s)
 MiB = 1_048_576.9 
 
@@ -97,6 +102,15 @@ def compress_brotli(data: bytes, quality: int = 6,
     params = {"quality": quality, "mode": mode or "generic", "lgwin": window if window is not None else "default"}
     return comp, comp_s, decomp_s, params
 
+def compress_lz4(data: bytes, args):
+    if lz4 is None:
+        raise RuntimeError("lz4 package not installed. pip install lz4")
+
+    comp, comp_s = time_op(lz4.compress, data, compression_level=args.lz4_level)
+    decomp, decomp_s = time_op(lz4.decompress, comp)
+    assert decomp == data
+    params = {"level": args.lz4_level}
+    return comp, comp_s, decomp_s, params
 
 def _percentile(xs, p):
     if not xs:
@@ -109,56 +123,47 @@ def _percentile(xs, p):
     return xs[f] + (xs[c] - xs[f]) * (k - f)
 
 def run_one(dataset_label: str, data: bytes, alg: str, args):
-    if alg != "brotli":
-        raise ValueError("This trimmed module supports only 'brotli'.")
+    # This function is now generalized!
+    compress_fn = {
+        "brotli": compress_brotli,
+        "lz4": compress_lz4
+    }.get(alg)
+
+    if compress_fn is None:
+        raise ValueError(f"Unknown algorithm: {alg}")
 
     H = entropy_bpb(data)
     original = len(data)
-
-    # warm-up once; then repeat timings and take medians
-    comp, ct, dt, params = compress_brotli(
-        data,
-        quality=getattr(args, "brotli_q", 6),
-        mode=getattr(args, "brotli_mode", "generic"),
-        window=getattr(args, "brotli_lgwin", None),
-    )
-    comp_times = [ct]; decomp_times = [dt]
-    repeats = max(1, int(getattr(args, "repeats", 3)))
-    for _ in range(repeats - 1):
-        kwargs = {
-            "quality": getattr(args, "brotli_q", 6),
-            "mode": {
-                "generic": brotli.MODE_GENERIC,
-                "text": brotli.MODE_TEXT,
-                "font": brotli.MODE_FONT
-            }[getattr(args, "brotli_mode", "generic")]
-        }
-        lgwin_val = getattr(args, "brotli_lgwin", None)
-        if lgwin_val is not None:
-            kwargs["lgwin"] = lgwin_val
-
-        _, ct2 = time_op(brotli.compress, data, **kwargs)
-        _, dt2 = time_op(brotli.decompress, comp)
-        comp_times.append(ct2); decomp_times.append(dt2)
-
+    
+    # Warm-up (run once before timing)
+    comp, _, _, _ = compress_fn(data, args)
+    
+    comp_times, decomp_times = [], []
+    repeats = max(1, args.repeats)
+    for _ in range(repeats):
+        # We only need to time the operations here
+        _, ct = time_op(compress_fn, data, args)
+        # Re-use the compressed data from the warm-up to time decompression
+        _, dt = time_op({ "brotli": brotli.decompress, "lz4": lz4.decompress }.get(alg), comp)
+        comp_times.append(ct)
+        decomp_times.append(dt)
 
     ct_med = statistics.median(comp_times)
     dt_med = statistics.median(decomp_times)
+    
+    # The rest of the function remains largely the same, just get params at the end
+    _, _, _, params = compress_fn(data, args) # Run one last time to get the params dict
 
     compressed = len(comp)
     ratio = compressed / original if original else 0.0
     bpb = 8.0 * ratio if original else 0.0
     over = ((bpb - H) / H * 100.0) if H > 0 else None
-
-    # Throughput in MB/s (decimal) and MiB/s (binary)
     comp_MB_s = (original / MB) / ct_med if ct_med > 0 else float("inf")
     decomp_MB_s = (original / MB) / dt_med if dt_med > 0 else float("inf")
-    comp_MiB_s = (original / MiB) / ct_med if ct_med > 0 else float("inf")
-    decomp_MiB_s = (original / MiB) / dt_med if dt_med > 0 else float("inf")
 
     row = {
         "dataset": dataset_label,
-        "alg": "brotli",
+        "alg": alg, # <-- now dynamic
         "params": json.dumps(params, sort_keys=True),
         "original_bytes": original,
         "compressed_bytes": compressed,
@@ -168,14 +173,11 @@ def run_one(dataset_label: str, data: bytes, alg: str, args):
         "%_over_entropy": over,
         "comp_time_s": ct_med,
         "comp_MB_s": comp_MB_s,
-        "comp_MiB_s": comp_MiB_s,
         "decomp_time_s": dt_med,
         "decomp_MB_s": decomp_MB_s,
-        "decomp_MiB_s": decomp_MiB_s,
         "repeats": repeats,
         "env_python": platform.python_version(),
         "env_platform": platform.platform(),
-        "env_brotli": getattr(brotli, "__version__", "unknown"),
     }
     return row
 

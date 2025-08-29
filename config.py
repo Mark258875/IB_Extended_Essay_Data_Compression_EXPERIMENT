@@ -26,6 +26,10 @@ class BrotliCfg:
     lgwin: Optional[int] = None   # 10..24 or None
 
 @dataclass
+class Lz4Cfg:
+    compression_level: int = 1  # 0..16
+
+@dataclass
 class Timing:
     repeats: int = 5              # >=1
     warmup: int = 1               # >=0
@@ -34,6 +38,7 @@ class Timing:
 class Config:
     paths: Paths
     brotli: BrotliCfg = field(default_factory=BrotliCfg)
+    lz4: Lz4Cfg = field(default_factory=Lz4Cfg)
     timing: Timing = field(default_factory=Timing)
 
     # ---- loading & validation ----
@@ -46,8 +51,9 @@ class Config:
         # apply defaults and coerce to dataclasses
         paths = Config._parse_paths(data.get("paths", {}))
         brotli = Config._parse_brotli(data.get("brotli", {}))
+        lz4 = Config._parse_lz4(data.get("lz4", {}))
         timing = Config._parse_timing(data.get("timing", {}))
-        cfg = Config(paths=paths, brotli=brotli, timing=timing)
+        cfg = Config(paths=paths, brotli=brotli, lz4=lz4, timing=timing)
         cfg._validate()
         return cfg
 
@@ -71,6 +77,11 @@ class Config:
         return BrotliCfg(quality=quality, mode=mode, lgwin=lgwin)
 
     @staticmethod
+    def _parse_lz4(d: Dict[str, Any]) -> Lz4Cfg:
+        level = int(d.get("compression_level", 1))
+        return Lz4Cfg(compression_level=level)
+
+    @staticmethod
     def _parse_timing(d: Dict[str, Any]) -> Timing:
         repeats = int(d.get("repeats", 5))
         warmup = int(d.get("warmup", 1))
@@ -79,6 +90,8 @@ class Config:
     def _validate(self) -> None:
         if not (0 <= self.brotli.quality <= 11):
             raise ValueError("brotli.quality must be in [0, 11].")
+        if not (0 <= self.lz4.compression_level <= 16):
+            raise ValueError("lz4.compression_level must be in [0, 16].")
         if self.brotli.mode not in _VALID_MODES:
             raise ValueError(f"brotli.mode must be one of {_VALID_MODES}.")
         if self.brotli.lgwin is not None and not (10 <= self.brotli.lgwin <= 24):
@@ -87,6 +100,7 @@ class Config:
             raise ValueError("timing.repeats must be >= 1.")
         if self.timing.warmup < 0:
             raise ValueError("timing.warmup must be >= 0.")
+        
 
     # ---- helpers used by your main/bench code ----
     def to_bench_args(self) -> SimpleNamespace:
@@ -95,6 +109,7 @@ class Config:
             brotli_q=self.brotli.quality,
             brotli_mode=self.brotli.mode,
             brotli_lgwin=self.brotli.lgwin,
+            lz4_level=self.lz4.compression_level,
             repeats=self.timing.repeats,
             warmup=self.timing.warmup,
         )

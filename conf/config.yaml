@@ -13,6 +13,9 @@ brotli:
 timing:
   repeats: 5          # run each measurement N times and report the median
 
+lz4:
+  compression_level: 1 # 0..16 (standard levels, 0 is default)
+
 synthetic:
   kind: zipf      # uniform | gaussian | zipf
   size: 10000000  # 10 MB
