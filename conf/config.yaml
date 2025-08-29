@@ -1,6 +1,8 @@
 paths:
   input_globs:
     - "./data/*.txt"
+    - "./data/binary/**/*.txt"   # ascii01
+    - "./data/binary/**/*.bin"   # bitpack
 
   output_dir: "./results"
   output_filename: "results.csv" # funguje na tom este MAIN.PY
