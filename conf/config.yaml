@@ -3,15 +3,20 @@ paths:
     - "./data/*.txt"
 
   output_dir: "./results"
-  output_filename: "brotli_results.csv"
+  output_filename: "results.csv" # funguje na tom este MAIN.PY
+  output_brotli: "results_brotli.csv"   
+  output_lz4:    "results_lz4.csv"
 
 brotli:
-  quality: 1          # 0..11  (higher = better ratio, slower)
+  quality: 2          # 0..11  (higher = better ratio, slower)
   mode: text       # generic | text | font
   lgwin: null         # 10..24 window size as log2, or null for default
 
 timing:
   repeats: 5          # run each measurement N times and report the median
+
+lz4:
+  compression_level: 1 # 0..16 (standard levels, 0 is default)
 
 synthetic:
   kind: zipf      # uniform | gaussian | zipf

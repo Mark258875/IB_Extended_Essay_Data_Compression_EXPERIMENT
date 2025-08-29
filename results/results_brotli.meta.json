@@ -1,18 +1,11 @@
 {
-  "timestamp": 1755989403.2370832,
+  "timestamp": 1756462994.625094,
   "python_version": "3.10.2",
   "platform": "Windows-10-10.0.19045-SP0",
   "input_globs": [
     "./data/*.txt"
   ],
-  "output_csv": "results\\brotli_results.csv",
-  "brotli": {
-    "quality": 1,
-    "mode": "text",
-    "lgwin": null
-  },
-  "repeats": 5,
-  "brotli_version": "1.1.0",
+  "output_csv": "results\\results_brotli.csv",
   "sweep": {
     "qualities": [
       0,
@@ -32,5 +25,7 @@
   "brotli_base": {
     "mode": "text",
     "lgwin": null
-  }
+  },
+  "repeats": 5,
+  "brotli_version": "1.1.0"
 }

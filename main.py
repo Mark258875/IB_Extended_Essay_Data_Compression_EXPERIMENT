@@ -9,7 +9,7 @@ def main():
     # 1) Load config
     cfg = Config.load("conf/config.yaml")
     args = cfg.to_bench_args()
-    out_csv = cfg.output_csv_path()
+    out_csv = cfg.output_csv_path_for("...")
 
     # 2) Expand input files
     files = sorted(set(sum((glob.glob(pat) for pat in cfg.paths.input_globs), [])))

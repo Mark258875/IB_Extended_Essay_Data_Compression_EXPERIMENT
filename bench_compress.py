@@ -9,6 +9,11 @@ try:
 except Exception:
     brotli = None
 
+try:
+    import lz4.frame as lz4
+except ImportError:
+    lz4 = None
+
 MB = 1_000_000.0  # decimal MB for throughput (MB/s)
 MiB = 1_048_576.9 
 
@@ -75,28 +80,40 @@ def gen_zipf(size: int, s: float, seed: Optional[int]) -> bytes:
     return bytes(out)
 
 # ---------- Brotli wrapper + single-ALG runner ----------
-
-def compress_brotli(data: bytes, quality: int = 6,
-                    mode: Optional[str] = None,
-                    window: Optional[int] = None) -> Tuple[bytes, float, float, Dict]:
+def compress_brotli(data: bytes, args) -> Tuple[bytes, float, float, Dict]:
+    """Compress+decompress once and return (comp_bytes, comp_time, decomp_time, params)."""
     if brotli is None:
         raise RuntimeError("brotli package not installed. pip install brotli")
-    kwargs = {"quality": quality}
-    if mode:
+
+    q = int(getattr(args, "brotli_q", 6))
+    mode = (getattr(args, "brotli_mode", "generic") or "generic").lower()
+    lgwin = getattr(args, "brotli_lgwin", None)
+
+    kwargs = {"quality": q}
+    if mode in {"generic", "text", "font"}:
         kwargs["mode"] = {
             "generic": brotli.MODE_GENERIC,
             "text": brotli.MODE_TEXT,
-            "font": brotli.MODE_FONT
-        }.get(mode, brotli.MODE_GENERIC)
-    # ⬇⬇ important: only include lgwin if not None
-    if window is not None:
-        kwargs["lgwin"] = window
+            "font": brotli.MODE_FONT,
+        }[mode]
+    if lgwin is not None:
+        kwargs["lgwin"] = int(lgwin)
+
     comp, comp_s = time_op(brotli.compress, data, **kwargs)
     decomp, decomp_s = time_op(brotli.decompress, comp)
     assert decomp == data
-    params = {"quality": quality, "mode": mode or "generic", "lgwin": window if window is not None else "default"}
+
+    params = {"quality": q, "mode": mode, "lgwin": lgwin if lgwin is not None else "default"}
     return comp, comp_s, decomp_s, params
 
+def compress_lz4(data: bytes, args):
+    if lz4 is None:
+        raise RuntimeError("lz4 package not installed. pip install lz4")
+    comp, comp_s = time_op(lz4.compress, data, compression_level=int(args.lz4_level))
+    decomp, decomp_s = time_op(lz4.decompress, comp)
+    assert decomp == data
+    params = {"level": int(args.lz4_level)}
+    return comp, comp_s, decomp_s, params
 
 def _percentile(xs, p):
     if not xs:
@@ -109,57 +126,54 @@ def _percentile(xs, p):
     return xs[f] + (xs[c] - xs[f]) * (k - f)
 
 def run_one(dataset_label: str, data: bytes, alg: str, args):
-    if alg != "brotli":
-        raise ValueError("This trimmed module supports only 'brotli'.")
+    compress_fn = {
+        "brotli": compress_brotli,
+        "lz4": compress_lz4,
+    }.get(alg)
+    if compress_fn is None:
+        raise ValueError(f"Unknown algorithm: {alg}")
 
     H = entropy_bpb(data)
     original = len(data)
 
-    # warm-up once; then repeat timings and take medians
-    comp, ct, dt, params = compress_brotli(
-        data,
-        quality=getattr(args, "brotli_q", 6),
-        mode=getattr(args, "brotli_mode", "generic"),
-        window=getattr(args, "brotli_lgwin", None),
-    )
-    comp_times = [ct]; decomp_times = [dt]
-    repeats = max(1, int(getattr(args, "repeats", 3)))
-    for _ in range(repeats - 1):
-        kwargs = {
-            "quality": getattr(args, "brotli_q", 6),
-            "mode": {
-                "generic": brotli.MODE_GENERIC,
-                "text": brotli.MODE_TEXT,
-                "font": brotli.MODE_FONT
-            }[getattr(args, "brotli_mode", "generic")]
-        }
-        lgwin_val = getattr(args, "brotli_lgwin", None)
-        if lgwin_val is not None:
-            kwargs["lgwin"] = lgwin_val
+    # Warm-up
+    warm = max(0, getattr(args, "warmup", 1))
+    for _ in range(warm):
+        compress_fn(data, args)
 
-        _, ct2 = time_op(brotli.compress, data, **kwargs)
-        _, dt2 = time_op(brotli.decompress, comp)
-        comp_times.append(ct2); decomp_times.append(dt2)
+    comp_times, decomp_times = [], []
+    repeats = max(1, args.repeats)
 
+    last_comp = None
+    last_params = None
+    for _ in range(repeats):
+        comp, ct, _, params = compress_fn(data, args)
+        _, dt = time_op({"brotli": brotli.decompress, "lz4": lz4.decompress}[alg], comp)
+        comp_times.append(ct)
+        decomp_times.append(dt)
+        last_comp = comp
+        last_params = params
 
     ct_med = statistics.median(comp_times)
     dt_med = statistics.median(decomp_times)
 
-    compressed = len(comp)
+    comp_MB_s   = (original / MB)  / ct_med if ct_med > 0 else float("inf")
+    decomp_MB_s = (original / MB)  / dt_med if dt_med > 0 else float("inf")
+    comp_MiB_s  = (original / MiB) / ct_med if ct_med > 0 else float("inf")
+    decomp_MiB_s= (original / MiB) / dt_med if dt_med > 0 else float("inf")
+
+
+    compressed = len(last_comp)
     ratio = compressed / original if original else 0.0
     bpb = 8.0 * ratio if original else 0.0
     over = ((bpb - H) / H * 100.0) if H > 0 else None
-
-    # Throughput in MB/s (decimal) and MiB/s (binary)
     comp_MB_s = (original / MB) / ct_med if ct_med > 0 else float("inf")
     decomp_MB_s = (original / MB) / dt_med if dt_med > 0 else float("inf")
-    comp_MiB_s = (original / MiB) / ct_med if ct_med > 0 else float("inf")
-    decomp_MiB_s = (original / MiB) / dt_med if dt_med > 0 else float("inf")
 
     row = {
         "dataset": dataset_label,
-        "alg": "brotli",
-        "params": json.dumps(params, sort_keys=True),
+        "alg": alg,
+        "params": json.dumps(last_params, sort_keys=True),
         "original_bytes": original,
         "compressed_bytes": compressed,
         "ratio": ratio,
@@ -168,16 +182,20 @@ def run_one(dataset_label: str, data: bytes, alg: str, args):
         "%_over_entropy": over,
         "comp_time_s": ct_med,
         "comp_MB_s": comp_MB_s,
+        "decomp_time_s": dt_med,
+        "decomp_MB_s": decomp_MB_s,
+        "repeats": repeats,
+        "comp_time_s": ct_med,
+        "comp_MB_s": comp_MB_s,
         "comp_MiB_s": comp_MiB_s,
         "decomp_time_s": dt_med,
         "decomp_MB_s": decomp_MB_s,
-        "decomp_MiB_s": decomp_MiB_s,
-        "repeats": repeats,
+        "decomp_MiB_s": decomp_MiB_s, 
         "env_python": platform.python_version(),
         "env_platform": platform.platform(),
-        "env_brotli": getattr(brotli, "__version__", "unknown"),
     }
     return row
+
 
 def write_csv(rows, path: Path, append: bool = False):
     if not rows:
