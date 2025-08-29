@@ -1,9 +1,9 @@
 {
-  "timestamp": 1756466649.1310484,
+  "timestamp": 1756495879.9002883,
   "python_version": "3.10.2",
   "platform": "Windows-10-10.0.19045-SP0",
   "input_globs": [
-    "./data/*.txt"
+    "./data/binary/**/*.txt"
   ],
   "output_csv": "results\\results_lz4.csv",
   "sweep": {

@@ -27,9 +27,14 @@ from collections import Counter
 from config import Config
 
 
-def expand_files(patterns: List[str]) -> List[str]:
-    files = sorted(set(sum((glob.glob(pat) for pat in patterns), [])))
-    return [f for f in files if Path(f).is_file()]
+def expand_files(patterns):
+    out = set()
+    for pat in patterns:
+        for p in glob.glob(pat, recursive=True):  # <-- needed for ** to work
+            pth = Path(p)
+            if pth.is_file():
+                out.add(str(pth))
+    return sorted(out)
 
 '''
 OPTION 1: 

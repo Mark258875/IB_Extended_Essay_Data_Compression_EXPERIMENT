@@ -23,8 +23,13 @@ from runtime_tuning import apply_runtime
 
 
 def expand_files(patterns):
-    return sorted(set(sum((glob.glob(pat) for pat in patterns), [])))
-
+    out = set()
+    for pat in patterns:
+        for p in glob.glob(pat, recursive=True):   # <= recursive!
+            pth = Path(p)
+            if pth.is_file():
+                out.add(str(pth))
+    return sorted(out)
 
 def _safe_dist_version(dist_name: str, default: str = "unknown") -> str:
     try:
