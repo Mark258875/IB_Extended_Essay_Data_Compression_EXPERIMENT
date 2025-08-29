@@ -14,3 +14,7 @@ pip install -r requirements.txt
 NOTES:
 
 - nezalezi to len od mnozstva ale aj od kombinaciiiii !!! 
+
+Experiment Documentation:
+
+- standardised computing resources
