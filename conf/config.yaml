@@ -7,6 +7,11 @@ paths:
   output_brotli: "results_brotli.csv"   
   output_lz4:    "results_lz4.csv"
 
+runtime:
+  cpu_affinity: 0
+  priority: high
+  warn_small_bytes: 10000000
+
 brotli:
   quality: 2          # 0..11  (higher = better ratio, slower)
   mode: text       # generic | text | font

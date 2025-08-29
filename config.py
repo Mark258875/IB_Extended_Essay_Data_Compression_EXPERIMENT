@@ -31,6 +31,12 @@ class Paths:
         return outdir / "results.csv"
 
 @dataclass
+class RuntimeCfg:
+    cpu_affinity: Optional[int] = None
+    priority: str = "normal"
+    warn_small_bytes: int = 10_000_000
+    
+@dataclass
 class BrotliCfg:
     quality: int = 6              # 0..11
     mode: str = "generic"         # generic|text|font
@@ -51,6 +57,7 @@ class Config:
     brotli: BrotliCfg = field(default_factory=BrotliCfg)
     lz4: Lz4Cfg = field(default_factory=Lz4Cfg)
     timing: Timing = field(default_factory=Timing)
+    runtime: RuntimeCfg = field(default_factory=RuntimeCfg)
 
     # ---- loading & validation ----
     @staticmethod
@@ -64,9 +71,18 @@ class Config:
         brotli = Config._parse_brotli(data.get("brotli", {}))
         lz4 = Config._parse_lz4(data.get("lz4", {}))
         timing = Config._parse_timing(data.get("timing", {}))
-        cfg = Config(paths=paths, brotli=brotli, lz4=lz4, timing=timing)
+        runtime = Config._parse_runtime(data.get("runtime", {}))
+        cfg = Config(paths=paths, brotli=brotli, lz4=lz4, timing=timing, runtime=runtime)
         cfg._validate()
         return cfg
+
+    @staticmethod
+    def _parse_runtime(d: Dict[str, Any]) -> RuntimeCfg:
+        return RuntimeCfg(
+            cpu_affinity=(int(d["cpu_affinity"]) if d.get("cpu_affinity") is not None else None),
+            priority=str(d.get("priority", "normal")).lower(),
+            warn_small_bytes=int(d.get("warn_small_bytes", 10_000_000)),  # new
+        )
 
     @staticmethod
     def _parse_paths(d: Dict[str, Any]) -> Paths:
