@@ -208,3 +208,5 @@ __marimo__/
 
 #Project INPUTS OUTPUTS
 __pycache__/
+data\enwik9
+data\enwik9.zip
