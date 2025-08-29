@@ -1,0 +1,23 @@
+paths:
+  input_globs:
+    - "./data/*.txt"
+
+  output_dir: "./results"
+  output_filename: "brotli_results.csv"
+
+brotli:
+  quality: 1          # 0..11  (higher = better ratio, slower)
+  mode: text       # generic | text | font
+  lgwin: null         # 10..24 window size as log2, or null for default
+
+timing:
+  repeats: 5          # run each measurement N times and report the median
+
+synthetic:
+  kind: zipf      # uniform | gaussian | zipf
+  size: 10000000  # 10 MB
+  params:
+    s: 1.2        # zipf parameter (only for kind=zipf)
+    mu: 128       # for gaussian (ignored otherwise)
+    sigma: 40     # for gaussian (ignored otherwise)
+  seed: 123
