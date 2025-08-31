@@ -1,0 +1,1 @@
+#plots random files to see how well they were compressed. 

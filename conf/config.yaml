@@ -2,7 +2,7 @@ paths:
   input_globs:
     #- "./data/*.txt"
     - "./data/binary/**/*.txt"   # ascii01
-    #- "./data/binary/**/*.bin"   # bitpack
+    - "./data/binary/**/*.bin"   # bitpack
     #- "./data/enwik9"
 
   output_dir: "./results"

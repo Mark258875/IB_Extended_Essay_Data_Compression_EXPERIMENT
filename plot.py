@@ -1,244 +1,219 @@
 #!/usr/bin/env python3
-# plot_binary_entropy_vs_results.py
 from __future__ import annotations
 
 import argparse
 import csv
 import json
 import math
-import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import matplotlib.pyplot as plt
 
-# ---------- config ----------
-RESULTS_DIR = Path("results")
-BROTLI_CSV = RESULTS_DIR / "results_brotli.csv"
-LZ4_CSV    = RESULTS_DIR / "results_lz4.csv"
-PLOT_DIR   = RESULTS_DIR / "plots"
 
-# We compare to *binary* entropy, so we only use datasets produced by the 0/1 generator.
-# Theoretical comparison H(p) is valid for i.i.d. Bernoulli sources.
-# We'll use **random** order only (not alternating/blocks), because alternating/blocks are not i.i.d.
-USE_ONLY_RANDOM = True
-
-# ---------- helpers & types ----------
-
-@dataclass
-class Row:
-    alg: str                 # 'brotli' or 'lz4' (as in CSV)
-    dataset: str             # dataset path string from CSV
-    p: float                 # Bernoulli p extracted from path
-    quality: Optional[int]   # brotli quality or lz4 level
-    order: str               # 'random' | 'alternating' | 'blocks' | 'other'
-    kind: str                # 'ascii01' | 'bitpack' | 'other'
-    s_bits_per_byte: int     # 1 for ascii01; 8 for bitpack; otherwise inferred
-    original_bytes: int
-    compressed_bytes: int
-    ratio: float
-    bpb: float               # bits per *byte* (8 * ratio)
-    bpbit: float             # bits per *source bit* = bpb / s_bits_per_byte
+# ---------- theory ----------
 
 def binary_entropy(p: float) -> float:
-    """H(p) in bits per bit."""
+    """H(p) in bits per source bit (Bernoulli i.i.d.)."""
     if p <= 0.0 or p >= 1.0:
         return 0.0
     q = 1.0 - p
     return -(p * math.log2(p) + q * math.log2(q))
 
-_re_p = re.compile(r"[\\/]+p([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
 
-def extract_p(dataset_path: str) -> Optional[float]:
-    m = _re_p.search(dataset_path)
-    if not m:
-        return None
-    try:
-        return float(m.group(1))
-    except Exception:
-        return None
+def p_grid(n: int = 512) -> List[float]:
+    return [i / (n - 1) for i in range(n)]
 
-def detect_kind_and_order(dataset_path: str) -> Tuple[str, str, int]:
-    lower = dataset_path.lower()
-    kind = "bitpack" if "bitpack" in lower or lower.endswith(".bin") else \
-           ("ascii01" if "ascii01" in lower or lower.endswith(".txt") else "other")
-    if "_random_" in lower:
-        order = "random"
-    elif "_alternating_" in lower:
-        order = "alternating"
-    elif "_blocks_" in lower:
-        order = "blocks"
-    else:
-        order = "other"
-    s = 8 if kind == "bitpack" else 1
-    return kind, order, s
 
-def parse_quality(params_field: str, alg: str) -> Optional[int]:
-    """Params is JSON in the CSV (with proper CSV quoting)."""
-    try:
-        params = json.loads(params_field)
-    except Exception:
-        return None
-    # brotli: "quality"
-    if alg.lower() == "brotli":
-        q = params.get("quality")
-        return int(q) if q is not None else None
-    # lz4: use "lz4_level" or "level" if present
-    q = params.get("lz4_level", params.get("level"))
-    return int(q) if q is not None else None
-
-def read_results(csv_path: Path, alg_expect: str) -> List[Row]:
-    rows: List[Row] = []
-    if not csv_path.exists():
-        return rows
-    with csv_path.open("r", newline="", encoding="utf-8") as f:
-        r = csv.DictReader(f)
-        for line in r:
-            alg = line.get("alg", "").strip().lower()
-            if alg != alg_expect:
-                continue
-            dataset = line.get("dataset", "")
-            # only consider our 0/1 experiment inputs
-            if "data" not in dataset or "binary" not in dataset:
-                continue
-            p = extract_p(dataset)
-            if p is None:
-                continue
-
-            kind, order, s = detect_kind_and_order(dataset)
-            if USE_ONLY_RANDOM and order != "random":
-                continue
-
-            try:
-                orig = int(line["original_bytes"])
-                comp = int(line["compressed_bytes"])
-            except Exception:
-                # compute from ratio if needed
-                try:
-                    ratio = float(line.get("ratio", "nan"))
-                    # If original_bytes missing, skip (we need bpbit)
-                    continue
-                except Exception:
-                    continue
-
-            # prefer explicit ratio; compute if missing
-            try:
-                ratio = float(line.get("ratio", "")) if line.get("ratio") else comp / orig
-            except Exception:
-                ratio = comp / orig
-
-            bpb = 8.0 * ratio
-            bpbit = bpb / s
-
-            quality = parse_quality(line.get("params", "{}"), alg)
-
-            rows.append(Row(
-                alg=alg_expect,
-                dataset=dataset,
-                p=p,
-                quality=quality,
-                order=order,
-                kind=kind,
-                s_bits_per_byte=s,
-                original_bytes=orig,
-                compressed_bytes=comp,
-                ratio=ratio,
-                bpb=bpb,
-                bpbit=bpbit
-            ))
-    return rows
+# ---------- style ----------
 
 def ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
-def p_grid(n: int = 1000) -> List[float]:
-    return [i / n for i in range(n + 1)]
-
-# ---------- plotting ----------
 
 def palette_for_qualities(qualities: List[int]) -> Dict[int, str]:
-    # deterministic mapping using tab20
-    cmap = plt.get_cmap("tab20")
-    colors = {}
-    for i, q in enumerate(sorted(qualities)):
-        colors[q] = cmap(i % 20)
-    return colors
+    cmap = plt.cm.get_cmap("tab20")
+    return {q: cmap(i % 20) for i, q in enumerate(qualities)}
+
 
 def markers_for_kind(kind: str) -> str:
     return "o" if kind == "bitpack" else "^" if kind == "ascii01" else "s"
 
+
+# ---------- parsing ----------
+
+_P_TAG = re.compile(r"(?:^|[\\/])p(?P<p>(?:0(?:\.\d+)?)|(?:1(?:\.0+)?))(?:[\\/]|_)", re.IGNORECASE)
+
+def parse_p_from_dataset_path(dataset_field: str) -> Optional[float]:
+    m = _P_TAG.search(dataset_field)
+    if not m:
+        return None
+    try:
+        return float(m.group("p"))
+    except Exception:
+        return None
+
+def infer_kind(dataset_field: str) -> str:
+    s = dataset_field.lower()
+    if "bitpack" in s:
+        return "bitpack"
+    if "ascii01" in s:
+        return "ascii01"
+    return "other"
+
+def infer_order(dataset_field: str) -> str:
+    return "random" if "random" in dataset_field.lower() else "sequential"
+
+def parse_quality(params_json: str) -> Optional[int]:
+    try:
+        d = json.loads(params_json)
+        if isinstance(d, dict):
+            if "quality" in d and isinstance(d["quality"], (int, float)):
+                return int(d["quality"])
+            if "compression_level" in d and isinstance(d["compression_level"], (int, float)):
+                return int(d["compression_level"])
+    except Exception:
+        pass
+    return None
+
+
+# ---------- data model ----------
+
+@dataclass
+class Row:
+    dataset: str
+    alg: str
+    quality: Optional[int]
+    p: float
+    kind: str           # ascii01 | bitpack | other
+    order: str          # random | sequential
+    bpbit: float        # compressed bits per source bit
+
+    @staticmethod
+    def _compute_bpbit(kind: str, comp_bytes: float, orig_bytes: float) -> float:
+        if orig_bytes <= 0:
+            return float("nan")
+        if kind == "ascii01":
+            # Each source bit stored as one ASCII byte '0'/'1':
+            # bpbit = (compressed bits) / (source bits) = (comp_bytes*8) / (orig_bytes*1)
+            return (comp_bytes * 8.0) / orig_bytes
+        elif kind == "bitpack":
+            # Each original byte holds 8 source bits:
+            # bpbit = (comp_bytes*8)/(orig_bytes*8) = comp_bytes/orig_bytes
+            return comp_bytes / orig_bytes
+        else:
+            # Not expected here; fall back to bits-per-byte (won’t be compared to H(p) anyway)
+            return (comp_bytes * 8.0) / orig_bytes
+
+    @staticmethod
+    def from_csv_row(d: Dict[str, str]) -> Optional["Row"]:
+        dataset = d.get("dataset", "")
+        alg = d.get("alg", "").lower()
+
+        p = parse_p_from_dataset_path(dataset)
+        if p is None:
+            return None
+
+        kind = infer_kind(dataset)
+        order = infer_order(dataset)
+
+        try:
+            og = float(d.get("original_bytes", "0"))
+            comp = float(d.get("compressed_bytes", "0"))
+        except Exception:
+            return None
+
+        bpbit = Row._compute_bpbit(kind, comp, og)
+        quality = parse_quality(d.get("params", ""))
+
+        return Row(
+            dataset=dataset,
+            alg=alg,
+            quality=quality,
+            p=p,
+            kind=kind,
+            order=order,
+            bpbit=bpbit,
+        )
+
+
+def read_rows(csv_path: Path) -> List[Row]:
+    if not csv_path.exists():
+        return []
+    rows: List[Row] = []
+    with csv_path.open("r", newline="", encoding="utf-8") as f:
+        r = csv.DictReader(f)
+        for d in r:
+            row = Row.from_csv_row(d)
+            if row is not None:
+                rows.append(row)
+    return rows
+
+
+# ---------- plotting ----------
+
 def plot_all_qualities(rows: List[Row], alg: str, save_dir: Path) -> None:
     if not rows:
         return
-    # collect qualities present
     qualities = sorted({r.quality for r in rows if r.quality is not None})
     colors = palette_for_qualities(qualities)
 
     fig, ax = plt.subplots(figsize=(9, 6), dpi=120)
 
-    # theoretical H(p) curve
     xs = p_grid(800)
     ys = [binary_entropy(p) for p in xs]
-    ax.plot(xs, ys, linewidth=2.0, label="Binary entropy H(p)", zorder=1)
+    ax.plot(xs, ys, linewidth=2.0, label="Binary entropy H(p) (i.i.d. bound)", zorder=1)
 
-    # points grouped by quality
     for q in qualities:
         sub = [r for r in rows if r.quality == q]
         for r in sub:
-            ax.scatter(r.p, r.bpbit,
-                       s=50, alpha=0.9, color=colors[q],
-                       marker=markers_for_kind(r.kind),
-                       label=None, zorder=3)
-        # add one legend entry per quality (proxy)
-        ax.scatter([], [], s=60, color=colors[q], label=f"q={q}", marker="o")
+            ax.scatter(
+                r.p, r.bpbit,
+                s=50, alpha=0.9, color=colors[q],
+                marker=markers_for_kind(r.kind),
+                label=None, zorder=3
+            )
 
-    # marker legend for kind
     from matplotlib.lines import Line2D
-    kind_handles = [
-        Line2D([0], [0], marker="o", color="none", markerfacecolor="black", label="bitpack", markersize=7),
-        Line2D([0], [0], marker="^", color="none", markerfacecolor="black", label="ascii01", markersize=7),
+    qual_handles = [
+        Line2D([0], [0], marker="o", linestyle="none",
+               markerfacecolor=colors[q], markeredgecolor="none",
+               label=f"q={q}", markersize=7)
+        for q in qualities
     ]
+    kind_handles = [
+        Line2D([0], [0], marker=markers_for_kind("bitpack"), linestyle="none",
+               markerfacecolor="black", markeredgecolor="none", label="bitpack", markersize=7),
+        Line2D([0], [0], marker=markers_for_kind("ascii01"), linestyle="none",
+               markerfacecolor="black", markeredgecolor="none", label="ascii01", markersize=7),
+    ]
+    handles = qual_handles + kind_handles
+    ax.legend(
+        handles=handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.14),
+        ncol=min(6, max(2, len(handles))),
+        frameon=False
+    )
 
-    ax.set_title(f"{alg.upper()} — bits per source bit vs p (randomized binary data)")
+    ax.set_title(f"{alg.upper()} — bits per source bit vs p ({rows[0].order})")
     ax.set_xlabel("p (Pr[1])")
     ax.set_ylabel("bits per source bit (bpbit)")
     ax.set_xlim(0.0, 1.0)
-    ax.set_ylim(0.0, 1.05)  # H(p) ≤ 1
-    leg1 = ax.legend(loc="upper center", ncol=min(6, max(2, len(qualities))), frameon=False)
-    ax.add_artist(leg1)
-    ax.legend(handles=kind_handles, loc="upper right", frameon=False, title="Dataset kind")
-
+    ax.set_ylim(0.0, 1.05)
     ax.grid(True, alpha=0.3)
+
     ensure_dir(save_dir)
-    out = save_dir / f"{alg.lower()}_all_qualities_bpbit_vs_p.png"
-    fig.tight_layout()
+    out = save_dir / f"{alg.lower()}_{rows[0].order}_all_qualities_bpbit_vs_p.png"
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
     fig.savefig(out)
     plt.show()
 
-def write_gap_csv(rows: List[Row], alg: str, out_csv: Path) -> None:
-    ensure_dir(out_csv.parent)
-    with out_csv.open("w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow([
-            "alg","quality","p","dataset","kind","order",
-            "bpbit","H_p","gap_abs","gap_pct"
-        ])
-        for r in sorted(rows, key=lambda x: (x.quality if x.quality is not None else -1, x.p)):
-            H = binary_entropy(r.p)
-            gap_abs = r.bpbit - H
-            gap_pct = (r.bpbit / H - 1.0) * 100.0 if H > 0 else float("inf") if r.bpbit > 0 else 0.0
-            w.writerow([
-                r.alg, r.quality if r.quality is not None else "",
-                f"{r.p:.6f}", r.dataset, r.kind, r.order,
-                f"{r.bpbit:.6f}", f"{H:.6f}",
-                f"{gap_abs:.6f}", f"{gap_pct:.2f}"
-            ])
 
 def plot_per_quality(rows: List[Row], alg: str, save_dir: Path) -> None:
-    # group by quality
     by_q: Dict[int, List[Row]] = defaultdict(list)
     for r in rows:
         if r.quality is not None:
@@ -248,17 +223,12 @@ def plot_per_quality(rows: List[Row], alg: str, save_dir: Path) -> None:
         fig, ax = plt.subplots(figsize=(9, 6), dpi=120)
         xs = p_grid(800)
         ys = [binary_entropy(p) for p in xs]
-        ax.plot(xs, ys, linewidth=2.0, label="Binary entropy H(p)", zorder=1)
+        ax.plot(xs, ys, linewidth=2.0, label="Binary entropy H(p) (i.i.d. bound)", zorder=1)
 
-        # points & arrows
-        # alternate label offsets to reduce clutter
         offsets = [(-20, -10), (-20, 10), (20, -10), (20, 10)]
         k = 0
-
-        # show bitpack vs ascii markers separately
         colors = {"bitpack": "#1f77b4", "ascii01": "#ff7f0e", "other": "#2ca02c"}
 
-        kinds_present = sorted({r.kind for r in sub})
         for r in sorted(sub, key=lambda x: x.p):
             y_meas = r.bpbit
             H = binary_entropy(r.p)
@@ -266,75 +236,91 @@ def plot_per_quality(rows: List[Row], alg: str, save_dir: Path) -> None:
             ax.scatter(r.p, y_meas, s=55, color=colors.get(r.kind, "black"),
                        marker=marker, zorder=3)
 
-            # arrow from (p, H) to (p, y_meas)
-            ax.annotate(
-                "",
-                xy=(r.p, y_meas),
-                xytext=(r.p, H),
-                arrowprops=dict(arrowstyle="->", linewidth=1.2, alpha=0.8, color=colors.get(r.kind, "black")),
-                zorder=2,
-            )
-            # label
+            # arrow showing gap to H(p)
+            ax.annotate("", xy=(r.p, y_meas), xytext=(r.p, H),
+                        arrowprops=dict(arrowstyle="->", linewidth=1.2, alpha=0.8,
+                                        color=colors.get(r.kind, "black")),
+                        zorder=2)
             gap_abs = y_meas - H
             gap_pct = (y_meas / H - 1.0) * 100.0 if H > 0 else float("inf") if y_meas > 0 else 0.0
             off = offsets[k % len(offsets)]; k += 1
-            ax.annotate(
-                f"Δ={gap_abs:.3f}  ({gap_pct:+.1f}%)",
-                xy=(r.p, (y_meas + H) / 2),
-                xytext=off,
-                textcoords="offset points",
-                fontsize=8,
-                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7),
-            )
+            ax.annotate(f"Δ={gap_abs:.3f}  ({gap_pct:+.1f}%)",
+                        xy=(r.p, (y_meas + H) / 2), xytext=off,
+                        textcoords="offset points", fontsize=8,
+                        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7))
 
-        # legends
         from matplotlib.lines import Line2D
         kind_handles = [
-            Line2D([0], [0], marker="o", color="none", markerfacecolor=colors["bitpack"], label="bitpack", markersize=7),
-            Line2D([0], [0], marker="^", color="none", markerfacecolor=colors["ascii01"], label="ascii01", markersize=7),
+            Line2D([0], [0], marker=markers_for_kind("bitpack"), linestyle="none",
+                   markerfacecolor=colors["bitpack"], markeredgecolor="none", label="bitpack", markersize=7),
+            Line2D([0], [0], marker=markers_for_kind("ascii01"), linestyle="none",
+                   markerfacecolor=colors["ascii01"], markeredgecolor="none", label="ascii01", markersize=7),
         ]
-        ax.legend(handles=kind_handles, title="Dataset kind", loc="upper right", frameon=False)
+        ax.legend(
+            handles=kind_handles,
+            title="Dataset kind",
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.14),
+            ncol=len(kind_handles),
+            frameon=False
+        )
 
-        ax.set_title(f"{alg.upper()} q={q} — bpbit vs p with entropy gap")
+        ax.set_title(f"{alg.upper()} q={q} — bpbit vs p with entropy gap ({sub[0].order})")
         ax.set_xlabel("p (Pr[1])")
         ax.set_ylabel("bits per source bit (bpbit)")
         ax.set_xlim(0.0, 1.0)
         ax.set_ylim(0.0, 1.05)
         ax.grid(True, alpha=0.3)
+
         ensure_dir(save_dir)
-        out = save_dir / f"{alg.lower()}_q{q}_bpbit_vs_p.png"
-        fig.tight_layout()
+        out = save_dir / f"{alg.lower()}_{sub[0].order}_q{q}_bpbit_vs_p.png"
+        fig.tight_layout(rect=[0, 0.08, 1, 1])
         fig.savefig(out)
         plt.show()
 
-# ---------- main ----------
+
+# ---------- CLI / main ----------
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Plot binary entropy vs measured compression (bits per source bit) for 0/1 randomized data."
+    ap = argparse.ArgumentParser(
+        description="Plot bpbit vs p for binary datasets against the theoretical i.i.d. binary entropy."
     )
-    parser.add_argument("-b", "--brotli", action="store_true", help="Plot only Brotli figures")
-    parser.add_argument("-l", "--lz4",    action="store_true", help="Plot only LZ4 figures")
-    args = parser.parse_args()
+    grp = ap.add_mutually_exclusive_group(required=True)
+    grp.add_argument("-r", "--random", action="store_true", help="Use randomized-order datasets.")
+    grp.add_argument("-s", "--sequential", action="store_true", help="Use sequentialized datasets (anything not containing 'random').")
 
-    do_brotli = args.brotli or (not args.brotli and not args.lz4)
-    do_lz4    = args.lz4    or (not args.brotli and not args.lz4)
+    ap.add_argument("-b", "--brotli", action="store_true", help="Plot BROTLI only.")
+    ap.add_argument("-l", "--lz4", action="store_true", help="Plot LZ4 only.")
+    ap.add_argument("--brotli-csv", type=Path, default=Path("results") / "results_brotli.csv")
+    ap.add_argument("--lz4-csv", type=Path, default=Path("results") / "results_lz4.csv")
+    ap.add_argument("--out-dir", type=Path, default=Path("plots"))
 
-    PLOT_DIR.mkdir(parents=True, exist_ok=True)
+    args = ap.parse_args()
 
-    if do_brotli:
-        bro_rows = read_results(BROTLI_CSV, "brotli")
-        # All-qualities chart
-        plot_all_qualities(bro_rows, "brotli", PLOT_DIR)
-        # Per-quality charts with arrows & gap CSV
-        plot_per_quality(bro_rows, "brotli", PLOT_DIR)
-        write_gap_csv(bro_rows, "brotli", RESULTS_DIR / "entropy_gap_brotli.csv")
+    want_random = bool(args.random)
+    alg_filters = []
+    if args.brotli:
+        alg_filters.append(("brotli", args.brotli_csv))
+    if args.lz4:
+        alg_filters.append(("lz4", args.lz4_csv))
+    if not alg_filters:
+        alg_filters = [("brotli", args.brotli_csv), ("lz4", args.lz4_csv)]
 
-    if do_lz4:
-        lz4_rows = read_results(LZ4_CSV, "lz4")
-        plot_all_qualities(lz4_rows, "lz4", PLOT_DIR)
-        plot_per_quality(lz4_rows, "lz4", PLOT_DIR)
-        write_gap_csv(lz4_rows, "lz4", RESULTS_DIR / "entropy_gap_lz4.csv")
+    for alg, csv_path in alg_filters:
+        rows = read_rows(csv_path)
+        rows = [
+            r for r in rows
+            if r.alg == alg and r.order == ("random" if want_random else "sequential")
+               and r.kind in {"ascii01", "bitpack"}
+        ]
+        if not rows:
+            print(f"[{alg}] no rows matched ({'random' if want_random else 'sequential'}) in {csv_path}")
+            continue
+
+        out_dir = args.out_dir / alg
+        plot_all_qualities(rows, alg, out_dir)
+        plot_per_quality(rows, alg, out_dir)
+
 
 if __name__ == "__main__":
     main()
