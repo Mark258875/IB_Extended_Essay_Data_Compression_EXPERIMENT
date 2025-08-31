@@ -184,6 +184,12 @@ def plot_all_qualities(rows: List[Row], alg: str, save_dir: Path) -> None:
                label=f"q={q}", markersize=7)
         for q in qualities
     ]
+    qual_handles = [
+        Line2D([0], [0], marker="o", linestyle="none",
+               markerfacecolor=colors[q], markeredgecolor="none",
+               label=f"q={q}", markersize=7)
+        for q in qualities
+    ]
     kind_handles = [
         Line2D([0], [0], marker=markers_for_kind("bitpack"), linestyle="none",
                markerfacecolor="black", markeredgecolor="none", label="bitpack", markersize=7),
@@ -204,7 +210,9 @@ def plot_all_qualities(rows: List[Row], alg: str, save_dir: Path) -> None:
     ax.set_ylabel("bits per source bit (bpbit)")
     ax.set_xlim(0.0, 1.0)
     ax.set_ylim(0.0, 1.05)
+    ax.set_ylim(0.0, 1.05)
     ax.grid(True, alpha=0.3)
+
 
     ensure_dir(save_dir)
     out = save_dir / f"{alg.lower()}_{rows[0].order}_all_qualities_bpbit_vs_p.png"
@@ -248,6 +256,10 @@ def plot_per_quality(rows: List[Row], alg: str, save_dir: Path) -> None:
                         xy=(r.p, (y_meas + H) / 2), xytext=off,
                         textcoords="offset points", fontsize=8,
                         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7))
+            ax.annotate(f"Δ={gap_abs:.3f}  ({gap_pct:+.1f}%)",
+                        xy=(r.p, (y_meas + H) / 2), xytext=off,
+                        textcoords="offset points", fontsize=8,
+                        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7))
 
         from matplotlib.lines import Line2D
         kind_handles = [
@@ -271,6 +283,7 @@ def plot_per_quality(rows: List[Row], alg: str, save_dir: Path) -> None:
         ax.set_xlim(0.0, 1.0)
         ax.set_ylim(0.0, 1.05)
         ax.grid(True, alpha=0.3)
+
 
         ensure_dir(save_dir)
         out = save_dir / f"{alg.lower()}_{sub[0].order}_q{q}_bpbit_vs_p.png"
