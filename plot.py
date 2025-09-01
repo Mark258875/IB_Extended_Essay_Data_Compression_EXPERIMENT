@@ -90,23 +90,29 @@ class Row:
     p: float
     kind: str           # ascii01 | bitpack | other
     order: str          # random | sequential
-    bpbit: float        # compressed bits per source bit
+    bpbit: float        # compressed bits per source bit (for H(p) plots)
+    bpb_measured: Optional[float] = None      # CSV 'bpb' (bits per *input byte*)
+    entropy_bpb: Optional[float] = None       # CSV 'entropy_bpb' (zero-order, bits/byte)
 
     @staticmethod
     def _compute_bpbit(kind: str, comp_bytes: float, orig_bytes: float) -> float:
         if orig_bytes <= 0:
             return float("nan")
         if kind == "ascii01":
-            # Each source bit stored as one ASCII byte '0'/'1':
-            # bpbit = (compressed bits) / (source bits) = (comp_bytes*8) / (orig_bytes*1)
+            # bp/bit = (comp_bytes*8)/(orig_bytes*1)
             return (comp_bytes * 8.0) / orig_bytes
         elif kind == "bitpack":
-            # Each original byte holds 8 source bits:
-            # bpbit = (comp_bytes*8)/(orig_bytes*8) = comp_bytes/orig_bytes
+            # bp/bit = (comp_bytes*8)/(orig_bytes*8) = comp_bytes/orig_bytes
             return comp_bytes / orig_bytes
         else:
-            # Not expected here; fall back to bits-per-byte (won’t be compared to H(p) anyway)
             return (comp_bytes * 8.0) / orig_bytes
+
+    @staticmethod
+    def _parse_float_safe(s: str) -> Optional[float]:
+        try:
+            return float(s)
+        except Exception:
+            return None
 
     @staticmethod
     def from_csv_row(d: Dict[str, str]) -> Optional["Row"]:
@@ -129,6 +135,10 @@ class Row:
         bpbit = Row._compute_bpbit(kind, comp, og)
         quality = parse_quality(d.get("params", ""))
 
+        # Optional: measured bpb and zero-order entropy_bpb from CSV
+        bpb_measured = Row._parse_float_safe(d.get("bpb", ""))
+        entropy_bpb = Row._parse_float_safe(d.get("entropy_bpb", ""))
+
         return Row(
             dataset=dataset,
             alg=alg,
@@ -137,6 +147,8 @@ class Row:
             kind=kind,
             order=order,
             bpbit=bpbit,
+            bpb_measured=bpb_measured,
+            entropy_bpb=entropy_bpb,
         )
 
 
@@ -153,7 +165,7 @@ def read_rows(csv_path: Path) -> List[Row]:
     return rows
 
 
-# ---------- plotting ----------
+# ---------- plotting: bpbit vs p (existing) ----------
 
 def plot_all_qualities(rows: List[Row], alg: str, save_dir: Path) -> None:
     if not rows:
@@ -184,12 +196,6 @@ def plot_all_qualities(rows: List[Row], alg: str, save_dir: Path) -> None:
                label=f"q={q}", markersize=7)
         for q in qualities
     ]
-    qual_handles = [
-        Line2D([0], [0], marker="o", linestyle="none",
-               markerfacecolor=colors[q], markeredgecolor="none",
-               label=f"q={q}", markersize=7)
-        for q in qualities
-    ]
     kind_handles = [
         Line2D([0], [0], marker=markers_for_kind("bitpack"), linestyle="none",
                markerfacecolor="black", markeredgecolor="none", label="bitpack", markersize=7),
@@ -210,9 +216,7 @@ def plot_all_qualities(rows: List[Row], alg: str, save_dir: Path) -> None:
     ax.set_ylabel("bits per source bit (bpbit)")
     ax.set_xlim(0.0, 1.0)
     ax.set_ylim(0.0, 1.05)
-    ax.set_ylim(0.0, 1.05)
     ax.grid(True, alpha=0.3)
-
 
     ensure_dir(save_dir)
     out = save_dir / f"{alg.lower()}_{rows[0].order}_all_qualities_bpbit_vs_p.png"
@@ -256,10 +260,6 @@ def plot_per_quality(rows: List[Row], alg: str, save_dir: Path) -> None:
                         xy=(r.p, (y_meas + H) / 2), xytext=off,
                         textcoords="offset points", fontsize=8,
                         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7))
-            ax.annotate(f"Δ={gap_abs:.3f}  ({gap_pct:+.1f}%)",
-                        xy=(r.p, (y_meas + H) / 2), xytext=off,
-                        textcoords="offset points", fontsize=8,
-                        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7))
 
         from matplotlib.lines import Line2D
         kind_handles = [
@@ -284,7 +284,6 @@ def plot_per_quality(rows: List[Row], alg: str, save_dir: Path) -> None:
         ax.set_ylim(0.0, 1.05)
         ax.grid(True, alpha=0.3)
 
-
         ensure_dir(save_dir)
         out = save_dir / f"{alg.lower()}_{sub[0].order}_q{q}_bpbit_vs_p.png"
         fig.tight_layout(rect=[0, 0.08, 1, 1])
@@ -292,15 +291,85 @@ def plot_per_quality(rows: List[Row], alg: str, save_dir: Path) -> None:
         plt.show()
 
 
-# ---------- CLI / main ----------
+# ---------- NEW: entropy_bpb (x) vs actual bpb (y) ----------
 
+def plot_entropy_vs_bpb(rows: List[Row], alg: str, save_dir: Path, order_label: str) -> None:
+    """Scatter: x = zero-order entropy (bits/byte), y = measured compression (bits/byte).
+    Adds y=x reference line and 1:1 axes."""
+    # Keep rows that actually have both numbers
+    use = [r for r in rows if r.bpb_measured is not None and r.entropy_bpb is not None]
+    if not use:
+        print(f"[{alg}] no rows with both bpb and entropy_bpb present.")
+        return
+
+    qualities = sorted({r.quality for r in use if r.quality is not None})
+    colors = palette_for_qualities(qualities)
+
+    fig, ax = plt.subplots(figsize=(9, 6), dpi=120)
+
+    # Scatter: color by quality, marker by kind
+    for r in use:
+        c = colors.get(r.quality, "black") if r.quality is not None else "black"
+        ax.scatter(r.entropy_bpb, r.bpb_measured, s=50, alpha=0.9,
+                   color=c, marker=markers_for_kind(r.kind), zorder=3)
+
+    # y=x reference line
+    xy_max = max(
+        max((r.entropy_bpb for r in use), default=1.0),
+        max((r.bpb_measured for r in use), default=1.0)
+    )
+    m = xy_max * 1.05
+    ax.plot([0, m], [0, m], linestyle="--", linewidth=1.5, color="gray", alpha=0.8, label="y = x")
+
+    # Legends (quality & kind)
+    from matplotlib.lines import Line2D
+    qual_handles = [
+        Line2D([0], [0], marker="o", linestyle="none",
+               markerfacecolor=colors[q], markeredgecolor="none",
+               label=f"q={q}", markersize=7)
+        for q in qualities
+    ]
+    kind_handles = [
+        Line2D([0], [0], marker=markers_for_kind("bitpack"), linestyle="none",
+               markerfacecolor="black", markeredgecolor="none", label="bitpack", markersize=7),
+        Line2D([0], [0], marker=markers_for_kind("ascii01"), linestyle="none",
+               markerfacecolor="black", markeredgecolor="none", label="ascii01", markersize=7),
+    ]
+    ax.legend(
+        handles=qual_handles + kind_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.14),
+        ncol=min(6, max(2, len(qual_handles) + len(kind_handles))),
+        frameon=False
+    )
+
+    ax.set_title(f"{alg.upper()} — actual bpb vs zero-order entropy bpb ({order_label})")
+    ax.set_xlabel("zero-order entropy (bits per input byte)")
+    ax.set_ylabel("actual compression (bits per input byte)")
+    ax.set_xlim(0, m)
+    ax.set_ylim(0, m)
+    ax.set_aspect("equal", adjustable="box")
+    ax.grid(True, alpha=0.3)
+
+    ensure_dir(save_dir)
+    out = save_dir / f"{alg.lower()}_{order_label}_entropy_bpb_vs_bpb.png"
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+    fig.savefig(out)
+    plt.show()
+
+
+# ---------- CLI / main ----------
 def main():
     ap = argparse.ArgumentParser(
-        description="Plot bpbit vs p for binary datasets against the theoretical i.i.d. binary entropy."
+        description="Plot bpbit vs p for binary datasets, and entropy_bpb vs actual bpb."
     )
     grp = ap.add_mutually_exclusive_group(required=True)
-    grp.add_argument("-r", "--random", action="store_true", help="Use randomized-order datasets.")
-    grp.add_argument("-s", "--sequential", action="store_true", help="Use sequentialized datasets (anything not containing 'random').")
+    grp.add_argument("-r", "--random", action="store_true",
+                     help="Use randomized-order datasets.")
+    grp.add_argument("-s", "--sequential", action="store_true",
+                     help="Use sequentialized datasets (anything not containing 'random').")
+    grp.add_argument("-m", "--mixed", action="store_true",
+                     help="Use BOTH random and sequential datasets; ONLY plot entropy_bpb vs actual bpb.")
 
     ap.add_argument("-b", "--brotli", action="store_true", help="Plot BROTLI only.")
     ap.add_argument("-l", "--lz4", action="store_true", help="Plot LZ4 only.")
@@ -310,7 +379,16 @@ def main():
 
     args = ap.parse_args()
 
-    want_random = bool(args.random)
+    if args.mixed:
+        order_filter = None
+        order_label = "mixed"
+    elif args.random:
+        order_filter = "random"
+        order_label = "random"
+    else:
+        order_filter = "sequential"
+        order_label = "sequential"
+
     alg_filters = []
     if args.brotli:
         alg_filters.append(("brotli", args.brotli_csv))
@@ -321,18 +399,26 @@ def main():
 
     for alg, csv_path in alg_filters:
         rows = read_rows(csv_path)
-        rows = [
-            r for r in rows
-            if r.alg == alg and r.order == ("random" if want_random else "sequential")
-               and r.kind in {"ascii01", "bitpack"}
-        ]
+        # keep only our binary datasets
+        rows = [r for r in rows if r.alg == alg and r.kind in {"ascii01", "bitpack"}]
+        if order_filter is not None:
+            rows = [r for r in rows if r.order == order_filter]
+
         if not rows:
-            print(f"[{alg}] no rows matched ({'random' if want_random else 'sequential'}) in {csv_path}")
+            print(f"[{alg}] no rows matched ({order_label}) in {csv_path}")
             continue
 
         out_dir = args.out_dir / alg
+
+        if args.mixed:
+            # MIXED MODE: show ONLY the entropy vs actual bpb plot
+            plot_entropy_vs_bpb(rows, alg, out_dir, order_label)
+            continue
+
+        # RANDOM/SEQUENTIAL: show the original charts plus the new one
         plot_all_qualities(rows, alg, out_dir)
         plot_per_quality(rows, alg, out_dir)
+        plot_entropy_vs_bpb(rows, alg, out_dir, order_label)
 
 
 if __name__ == "__main__":
