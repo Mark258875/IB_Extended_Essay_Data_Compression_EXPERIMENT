@@ -100,12 +100,12 @@ class Row:
             return float("nan")
         if kind == "ascii01":
             # bp/bit = (comp_bytes*8)/(orig_bytes*1)
-            return (comp_bytes * 8.0) / orig_bytes
+            return (comp_bytes*8) / orig_bytes                    #*8 
         elif kind == "bitpack":
             # bp/bit = (comp_bytes*8)/(orig_bytes*8) = comp_bytes/orig_bytes
             return comp_bytes / orig_bytes
         else:
-            return (comp_bytes * 8.0) / orig_bytes
+            return (comp_bytes*8) / orig_bytes                    #*8
 
     @staticmethod
     def _parse_float_safe(s: str) -> Optional[float]:
