@@ -13,7 +13,7 @@ fig, ax = plt.subplots()
 ax.plot(p, H, linewidth=2, color="navy", zorder=1)
 
 # Updated labels/titles
-ax.set_title(r"Binary Shannon Entropy $H(p)$")
+ax.set_title(r"Binary Entropy $H(p)$")
 ax.set_xlabel(r"$p = \Pr(X=1)$")
 ax.set_ylabel("H(p) [bits]")
 
