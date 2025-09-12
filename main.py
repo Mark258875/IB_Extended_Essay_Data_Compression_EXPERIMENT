@@ -40,21 +40,26 @@ def write_meta(meta_path: Path, meta: dict) -> None:
 
 def run_alg(alg: str, files: list[str], args_ns: SimpleNamespace) -> list[dict]:
     rows = []
-    for f in files:
+    total_files = len(files)
+    for i, f in enumerate(files, 1):
+        print(f"[{alg}] Processing file {i}/{total_files}: {f}")
         data = Path(f).read_bytes()  # I/O not timed
+        start_time = time.time()
         try:
             row = bench.run_one(f, data, alg, args_ns)
             rows.append(row)
+            elapsed = time.time() - start_time
             ratio = row.get("ratio", float("nan"))
             bpb = row.get("bpb", float("nan"))
             H = row.get("entropy_bpb", float("nan"))
             comp = row.get("comp_MB_s", float("nan"))
             decomp = row.get("decomp_MB_s", float("nan"))
-            print(f"{f} | {alg} | ratio={ratio:.4f} bpb={bpb:.3f} H_bpb={H:.3f} "
+            print(f"  Done in {elapsed:.1f}s | ratio={ratio:.4f} bpb={bpb:.3f} H_bpb={H:.3f} "
                   f"comp={comp:.1f} MB/s decomp={decomp:.1f} MB/s")
         except Exception as e:
             print(f"[{alg}] ERROR on {f}: {e}")
     return rows
+
 
 
 def main():
