@@ -53,6 +53,16 @@ def quality_cmap_norm(qualities: List[int], cmap_name: str = "cividis"):
     return cmap, norm
 
 
+def palette_all_qualities(qualities):
+    """Map each quality to a color on a monotonic colormap."""
+    cmap, norm = quality_cmap_norm(qualities)
+    return {q: cmap(norm(q)) for q in qualities}
+
+def palette_for_qualities(qualities):
+    # Same behavior; kept separate because both names are used.
+    return palette_all_qualities(qualities)
+
+
 def markers_for_kind(kind: str) -> str:
     return "o" if kind == "bitpack" else "^" if kind == "ascii01" else "s"
 
