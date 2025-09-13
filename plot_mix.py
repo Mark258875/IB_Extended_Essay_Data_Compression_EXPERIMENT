@@ -117,7 +117,7 @@ def make_plot(points: List[Point], alg: str, out_dir: Path) -> None:
     qualities = sorted({p.quality for p in points if p.quality is not None})
     cmap, norm = palette_for_quality(qualities)
 
-    fig, ax = plt.subplots(figsize=(9, 7), dpi=120)
+    fig, ax = plt.subplots(figsize=(9, 7), dpi=120, constrained_layout=True)
 
     # scatter points (color by quality, marker by file)
     for p in points:
@@ -162,7 +162,7 @@ def make_plot(points: List[Point], alg: str, out_dir: Path) -> None:
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{alg.lower()}_entropy_vs_actual_by_file.png"
-    fig.tight_layout(rect=[0, 0, 0.85, 1])  # room for file legend on right
+    #fig.tight_layout(rect=[0, 0, 0.85, 1])  # room for file legend on right
     fig.savefig(out_path)
     print(f"saved: {out_path}")
     plt.show()

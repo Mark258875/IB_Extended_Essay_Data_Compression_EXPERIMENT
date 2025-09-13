@@ -263,11 +263,11 @@ def plot_per_quality(rows: List[Row], alg: str, save_dir: Path) -> None:
         fig, ax = plt.subplots(figsize=(9, 6), dpi=120)
         xs = p_grid(800)
         ys = [binary_entropy(p) for p in xs]
-        ax.plot(xs, ys, linewidth=2.0, label="Binary entropy H(p) (i.i.d. bound)", zorder=1)
+        ax.plot(xs, ys, linewidth=2.0, color="navy", label="Binary entropy H(p) (i.i.d. bound)", zorder=1)
 
         offsets = [(-20, -10), (-20, 10), (20, -10), (20, 10)]
         k = 0
-        colors = {"bitpack": "#1f77b4", "ascii01": "#ff7f0e", "other": "#2ca02c"}
+        colors = {"bitpack": "red", "ascii01": "#1b7c33", "other": "#eeff00"}
 
         for r in sorted(sub, key=lambda x: x.p):
             y_meas = r.bpbit
