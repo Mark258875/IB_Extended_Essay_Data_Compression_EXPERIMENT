@@ -167,9 +167,17 @@ def read_rows(csv_path: Path) -> List[Row]:
 
 # ---------- plotting: bpbit vs p (existing) ----------
 
-def plot_all_qualities(rows: List[Row], alg: str, save_dir: Path) -> None:
+def plot_all_qualities(rows: List[Row], alg: str, save_dir: Path, kind_filter: Optional[str] = None) -> None:
     if not rows:
         return
+
+    # Optional kind filtering just for this 'overall' plot
+    if kind_filter in {"ascii01", "bitpack"}:
+        rows = [r for r in rows if r.kind == kind_filter]
+        if not rows:
+            print(f"[{alg}] no rows matched first-graph kind filter '{kind_filter}'.")
+            return
+
     qualities = sorted({r.quality for r in rows if r.quality is not None})
     colors = palette_for_qualities(qualities)
 
@@ -196,12 +204,19 @@ def plot_all_qualities(rows: List[Row], alg: str, save_dir: Path) -> None:
                label=f"q={q}", markersize=7)
         for q in qualities
     ]
+
+    present_kinds = sorted({r.kind for r in rows})
+    kind_labels = {
+        "bitpack": "bitpack",
+        "ascii01": "ascii01",
+    }
     kind_handles = [
-        Line2D([0], [0], marker=markers_for_kind("bitpack"), linestyle="none",
-               markerfacecolor="black", markeredgecolor="none", label="bitpack", markersize=7),
-        Line2D([0], [0], marker=markers_for_kind("ascii01"), linestyle="none",
-               markerfacecolor="black", markeredgecolor="none", label="ascii01", markersize=7),
+        Line2D([0], [0], marker=markers_for_kind(k), linestyle="none",
+               markerfacecolor="black", markeredgecolor="none",
+               label=kind_labels.get(k, k), markersize=7)
+        for k in present_kinds
     ]
+
     handles = qual_handles + kind_handles
     ax.legend(
         handles=handles,
@@ -211,7 +226,8 @@ def plot_all_qualities(rows: List[Row], alg: str, save_dir: Path) -> None:
         frameon=False
     )
 
-    ax.set_title(f"{alg.upper()} — bits per source bit vs p ({rows[0].order})")
+    extra = f", {kind_filter}" if kind_filter in {"ascii01", "bitpack"} else ""
+    ax.set_title(f"{alg.upper()} — bits per source bit vs p ({rows[0].order}{extra})")
     ax.set_xlabel("p (Pr[1])")
     ax.set_ylabel("bits per source bit (bpbit)")
     ax.set_xlim(0.0, 1.0)
@@ -376,6 +392,13 @@ def main():
     ap.add_argument("--brotli-csv", type=Path, default=Path("results") / "results_brotli.csv")
     ap.add_argument("--lz4-csv", type=Path, default=Path("results") / "results_lz4.csv")
     ap.add_argument("--out-dir", type=Path, default=Path("plots"))
+    ap.add_argument(
+    "--first-kind",
+    choices=["all", "ascii01", "bitpack"],
+    default="all",
+    help="Limit ONLY the 'all-qualities' plot to ASCII .txt datasets ('ascii01') "
+         "or bitpacked .bin datasets ('bitpack')."
+)
 
     args = ap.parse_args()
 
@@ -416,7 +439,7 @@ def main():
             continue
 
         # RANDOM/SEQUENTIAL: show the original charts plus the new one
-        plot_all_qualities(rows, alg, out_dir)
+        plot_all_qualities(rows, alg, out_dir, kind_filter=None if args.first_kind == "all" else args.first_kind)
         plot_per_quality(rows, alg, out_dir)
         plot_entropy_vs_bpb(rows, alg, out_dir, order_label)
 
