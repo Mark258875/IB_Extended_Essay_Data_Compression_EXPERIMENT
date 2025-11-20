@@ -4,9 +4,15 @@ import argparse, csv, json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
-
+import numpy as np
+from collections import defaultdict
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import yaml
+
+
+# ---- style config ----
+COLORMAP = "cividis"  # single tonal map for quality
 
 # ---------- helpers ----------
 def norm(p: str) -> str:
@@ -20,15 +26,27 @@ def load_manifest(manifest_path: Path) -> Dict[str, dict]:
             by_path[norm(row["path"])] = row
     return by_path
 
+
 def parse_quality(params_json: str) -> Optional[int]:
+    def to_int(x) -> Optional[int]:
+        try:
+            return int(float(x))
+        except Exception:
+            return None
+
     try:
         d = json.loads(params_json)
         if isinstance(d, dict):
-            if "quality" in d: return int(d["quality"])
-            if "compression_level" in d: return int(d["compression_level"])
+            for key in ("quality", "compression_level", "level", "preset", "acceleration"):
+                if key in d:
+                    q = to_int(d[key])
+                    if q is not None:
+                        return q
     except Exception:
         pass
     return None
+
+
 
 @dataclass
 class Point:
@@ -52,6 +70,17 @@ class Point:
         if self.H0_per_symbol not in (None, ""):
             return float(self.H0_per_symbol)
         return None
+
+
+def palette_for_quality(qualities: List[int], q_min: int = 0, q_max: int = 16):
+    """
+    Return (cmap, norm) with a FIXED quality range [q_min, q_max].
+    This way Brotli (0–11) and LZ4 (0–16) share the same scale.
+    """
+    cmap = plt.cm.get_cmap(COLORMAP)
+    norm = mcolors.Normalize(vmin=q_min, vmax=q_max)
+    return cmap, norm
+
 
 def load_results(results_csv: Path, manifest: Dict[str, dict]) -> List[Point]:
     pts: List[Point] = []
@@ -85,6 +114,44 @@ def load_results(results_csv: Path, manifest: Dict[str, dict]) -> List[Point]:
                 continue
     return pts
 
+
+def quality_cmap_norm(qualities: List[int], cmap_name: str = "cividis"):
+    """
+    Return (cmap, norm) so you can color by: cmap(norm(q)).
+    Uses a single monotonic tonal palette across quality values.
+    """
+    cmap = plt.cm.get_cmap(cmap_name)
+    if not qualities:
+        return cmap, mcolors.Normalize(vmin=0, vmax=1)
+    qmin, qmax = min(qualities), max(qualities)
+    if qmin == qmax:
+        # avoid zero span when only one quality exists
+        qmin -= 0.5
+        qmax += 0.5
+    norm = mcolors.Normalize(vmin=qmin, vmax=qmax)
+    return cmap, norm
+
+
+def quality_palette(points: List[Point]):
+    """
+    Build a mapping {quality -> color} and return (colors, sorted_qualities).
+    Only considers points with a non-None quality.
+    """
+    qualities = sorted({p.quality for p in points if p.quality is not None})
+    cmap, norm = quality_cmap_norm(qualities)
+    colors = {q: cmap(norm(q)) for q in qualities}
+    return colors, qualities
+
+
+def marker_for_alg(alg: str) -> str:
+    """Different marker shapes for algorithms."""
+    a = alg.lower()
+    if a == "brotli":
+        return "o"  # circle
+    if a == "lz4":
+        return "^"  # triangle
+    return "s"      # square for anything else
+
 # ---------- plotting ----------
 
 def palette():
@@ -94,98 +161,93 @@ def palette():
 def marker_for_model(m: str) -> str:
     return {"iid_peaked": "o", "zipf": "^", "markov_persistent": "s", "histperm": "D"}.get(m, "o")
 
+
 def plot_universal_yx(
     points: List[Point],
     outdir: Path,
     title_suffix: str = "",
     filename_suffix: str = "",
 ) -> None:
-    """
-    Scatter: measured bits/symbol vs entropy baseline.
-    Used both globally (all models) and per-model.
-    """
+    # keep only points with a baseline
     pts = [p for p in points if p.H_baseline is not None]
     if not pts:
-        print(f"[plot] no points with entropy baseline available for {title_suffix!r}.")
+        print("[plot] no points with entropy baseline available.")
         return
 
-    colors = palette()
+    # collect qualities for colormap scaling
+    qualities = sorted({p.quality for p in pts if p.quality is not None})
+    cmap, norm = palette_for_quality(qualities, q_min=0, q_max=16)
+
     fig, ax = plt.subplots(figsize=(9, 6), dpi=120)
 
+    # scatter: color by quality, marker by algorithm
     for p in pts:
+        color = cmap(norm(p.quality)) if p.quality is not None else (0.5, 0.5, 0.5, 0.8)
+        marker = marker_for_alg(p.alg)
         ax.scatter(
             p.H_baseline,
             p.bp_per_symbol,
-            s=50,
-            alpha=0.9,
-            color=colors.get(p.alg, "k"),
-            marker=marker_for_model(p.model),
-            label=None,
+            s=55,
+            alpha=0.95,
+            color=color,
+            marker=marker,
+            edgecolor="none",
         )
 
-    # y = x theoretical limit
+    # y=x reference line (theoretical entropy limit)
     m = max(max(p.H_baseline for p in pts), max(p.bp_per_symbol for p in pts))
     m *= 1.05
     ax.plot(
         [0, m],
         [0, m],
         "--",
-        color="gray",
-        alpha=0.8,
+        color="black",
+        alpha=0.6,
         linewidth=1.5,
         label="y = x (entropy limit)",
     )
 
-    # legends
+    # legends: ONLY for algorithms (shapes), quality via colorbar
     from matplotlib.lines import Line2D
+    algs = sorted(set(p.alg for p in pts))
     alg_handles = [
         Line2D(
             [0],
             [0],
-            marker="o",
+            marker=marker_for_alg(a),
             linestyle="none",
-            markerfacecolor=colors[a],
+            markerfacecolor="white",
+            markeredgecolor="black",
             label=a.upper(),
-            markersize=7,
+            markersize=8,
         )
-        for a in sorted(set(p.alg for p in pts))
+        for a in algs
     ]
-    model_handles = [
-        Line2D(
-            [0],
-            [0],
-            marker=marker_for_model(mname),
-            linestyle="none",
-            markerfacecolor="black",
-            label=mname,
-            markersize=7,
+    if alg_handles:
+        ax.legend(
+            handles=alg_handles,
+            title="Algorithm (marker)",
+            loc="upper left",
+            frameon=False,
         )
-        for mname in sorted(set(p.model for p in pts))
-    ]
 
-    ax.legend(
-        handles=alg_handles + model_handles,
-        loc="upper center",
-        bbox_to_anchor=(0.5, -0.14),
-        ncol=max(3, len(alg_handles) + len(model_handles)),
-        frameon=False,
-    )
+    # colorbar for quality (no legend entries)
+    if qualities:
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=ax, pad=0.02)
+        cbar.set_label("quality")
 
-    title = "Bits per SYMBOL vs Entropy baseline"
-    if title_suffix:
-        title += f" {title_suffix}"
-    ax.set_title(title)
+    ax.set_title(f"Bits per SYMBOL vs Entropy baseline {title_suffix}".strip())
     ax.set_xlabel("Entropy per symbol (H_rate if available else H0) [bits/sym]")
     ax.set_ylabel("Measured bits per symbol [bits/sym]")
     ax.set_xlim(0, m)
     ax.set_ylim(0, m)
     ax.set_aspect("equal", adjustable="box")
     ax.grid(True, alpha=0.3)
-
     outdir.mkdir(parents=True, exist_ok=True)
-    fname = f"bp_per_symbol_vs_entropy{filename_suffix}.png"
-    out = outdir / fname
-    fig.tight_layout(rect=[0, 0.08, 1, 1])
+    out = outdir / f"bp_per_symbol_vs_entropy{filename_suffix}.png"
+    fig.tight_layout()
     fig.savefig(out)
     plt.show()
     print(f"[plot] {out}")
@@ -196,41 +258,230 @@ def plot_redundancy(
     title_suffix: str = "",
     filename_suffix: str = "",
 ) -> None:
-    """
-    Scatter: redundancy (measured − baseline) vs entropy baseline.
-    Only used per-model, not globally (to get 7 graphs total).
-    """
     pts = [p for p in points if p.H_baseline is not None and p.H_baseline > 0]
     if not pts:
-        print(f"[plot] no points with positive entropy baseline for {title_suffix!r}.")
+        print("[plot] no points with positive entropy baseline.")
         return
 
-    colors = palette()
+    # color mapping for quality
+    qualities = sorted({p.quality for p in pts if p.quality is not None})
+    cmap, norm = palette_for_quality(qualities, q_min=0, q_max=16)
+
     fig, ax = plt.subplots(figsize=(9, 6), dpi=120)
 
+    # group for trend-line computation
+    by_alg: Dict[str, List[tuple]] = defaultdict(list)
+
+    # scatter: color = quality, marker = algorithm
     for p in pts:
         gap = p.bp_per_symbol - p.H_baseline
+        color = cmap(norm(p.quality)) if p.quality is not None else (0.5, 0.5, 0.5, 0.8)
+        marker = marker_for_alg(p.alg)
+
         ax.scatter(
             p.H_baseline,
             gap,
-            s=50,
-            alpha=0.9,
-            color=colors.get(p.alg, "k"),
-            marker=marker_for_model(p.model),
+            s=55,
+            alpha=0.95,
+            color=color,
+            marker=marker,
+            edgecolor="none",
         )
 
+        by_alg[p.alg].append((p.H_baseline, gap, p.quality))
+
+    # horizontal zero line (ideal = no redundancy)
     ax.axhline(0.0, linestyle="--", color="gray", alpha=0.7)
-    title = "Redundancy vs Entropy baseline"
-    if title_suffix:
-        title += f" {title_suffix}"
-    ax.set_title(title)
+
+    # trend-line colors (you can tweak these)
+    trend_colors = {
+        "brotli": "navy",
+        "lz4": "red",
+    }
+
+    # --- trend lines only for highest quality per algorithm ---
+    for alg, rows in by_alg.items():
+        q_vals = [q for (_, _, q) in rows if q is not None]
+        if not q_vals:
+            continue
+        max_q = max(q_vals)  # should be 11 for Brotli, 16 for LZ4 in your setup
+
+        xs = np.array([H for (H, gap, q) in rows if q == max_q])
+        ys = np.array([gap for (H, gap, q) in rows if q == max_q])
+
+        if len(xs) < 2:
+            continue  # not enough points to fit a line
+
+        m, b = np.polyfit(xs, ys, deg=1)  # slope, intercept
+        x_line = np.linspace(xs.min(), xs.max(), 100)
+        y_line = m * x_line + b
+
+        color = trend_colors.get(alg, "black")
+        ax.plot(
+            x_line,
+            y_line,
+            linestyle="-",
+            linewidth=1.5,
+            color=color,
+            alpha=0.9,
+        )
+
+        # label next to the line: "trend line Brotli (q=11)" etc.
+        x_label = x_line[int(len(x_line) * 0.7)]
+        y_label = m * x_label + b
+        ax.text(
+            x_label,
+            y_label,
+            f"trend line {alg.upper()} (q={max_q})",
+            fontsize=8,
+            color=color,
+            ha="left",
+            va="center",
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7),
+        )
+
+    # legend ONLY for algorithms (shapes)
+    from matplotlib.lines import Line2D
+    algs = sorted(set(p.alg for p in pts))
+    alg_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker=marker_for_alg(a),
+            linestyle="none",
+            markerfacecolor="white",
+            markeredgecolor="black",
+            label=a.upper(),
+            markersize=8,
+        )
+        for a in algs
+    ]
+    if alg_handles:
+        ax.legend(
+            handles=alg_handles,
+            title="Algorithm (marker)",
+            loc="upper left",
+            frameon=False,
+        )
+
+    # colorbar for quality
+    if qualities:
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=ax, pad=0.02)
+        cbar.set_label("quality")
+
+    ax.set_title(f"Redundancy vs Entropy baseline {title_suffix}".strip())
+    ax.set_xlabel("Entropy per symbol (H_rate if available else H0) [bits/sym]")
+    ax.set_ylabel("Redundancy = (bp/sym − H_baseline) [bits/sym]")
+    ax.grid(True, alpha=0.3)
+    outdir.mkdir(parents=True, exist_ok=True)
+    out = outdir / f"redundancy_vs_entropy{filename_suffix}.png"
+    fig.tight_layout()
+    fig.savefig(out)
+    plt.show()
+    print(f"[plot] {out}")
+
+import numpy as np
+
+def plot_redundancy_for_alg(
+    points: List[Point],
+    alg: str,
+    outdir: Path,
+    title_suffix: str = "",
+    filename_suffix: str = "",
+) -> None:
+    """
+    Redundancy vs entropy baseline for a SINGLE algorithm.
+    - color = quality (fixed scale 0–16, shared with LZ4 range)
+    - trend line only for highest quality of this algorithm
+    - label includes the line equation R = m H + b
+    """
+    pts = [p for p in points if p.H_baseline is not None and p.H_baseline > 0]
+    if not pts:
+        print(f"[plot] no points with positive entropy baseline for {alg}.")
+        return
+
+    # color mapping for quality (fixed 0–16)
+    qualities = sorted({p.quality for p in pts if p.quality is not None})
+    cmap, norm = palette_for_quality(qualities, q_min=0, q_max=16)
+
+    fig, ax = plt.subplots(figsize=(9, 6), dpi=120)
+
+    # scatter: color = quality, marker = algorithm (all same alg here)
+    marker = marker_for_alg(alg)
+    for p in pts:
+        gap = p.bp_per_symbol - p.H_baseline
+        color = cmap(norm(p.quality)) if p.quality is not None else (0.5, 0.5, 0.5, 0.8)
+
+        ax.scatter(
+            p.H_baseline,
+            gap,
+            s=55,
+            alpha=0.95,
+            color=color,
+            marker=marker,
+            edgecolor="none",
+        )
+
+    # horizontal zero line (ideal = no redundancy)
+    ax.axhline(0.0, linestyle="--", color="gray", alpha=0.7)
+
+    # --- trend line only for highest quality of this algorithm ---
+    q_vals = [p.quality for p in pts if p.quality is not None]
+    if q_vals:
+        max_q = max(q_vals)  # should be 11 for Brotli, 16 for LZ4 given your setup
+
+        xs = np.array([p.H_baseline for p in pts if p.quality == max_q])
+        ys = np.array([p.bp_per_symbol - p.H_baseline for p in pts if p.quality == max_q])
+
+        if len(xs) >= 2:
+            m, b = np.polyfit(xs, ys, deg=1)  # slope, intercept
+            x_line = np.linspace(xs.min(), xs.max(), 100)
+            y_line = m * x_line + b
+
+            ax.plot(
+                x_line,
+                y_line,
+                linestyle="-",
+                linewidth=1.5,
+                color="black",
+                alpha=0.9,
+            )
+
+            # label near the right part of the line with full equation
+            x_label = x_line[int(len(x_line) * 0.7)]
+            y_label = m * x_label + b
+            ax.text(
+                x_label,
+                y_label,
+                (
+                    f"trend line {alg.upper()} (q={max_q})\n"
+                    f"R = {m:.3f}·H + {b:.3f}"
+                ),
+                fontsize=8,
+                color="black",
+                ha="left",
+                va="center",
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7),
+            )
+        else:
+            print(f"[plot] not enough points at max quality {max_q} for {alg} to fit a line.")
+
+    # colorbar for quality (0–16)
+    if qualities:
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=ax, pad=0.02)
+        cbar.set_label("quality (0–16)")
+
+    ax.set_title(f"{alg.upper()} — Redundancy vs Entropy baseline {title_suffix}".strip())
     ax.set_xlabel("Entropy per symbol (H_rate if available else H0) [bits/sym]")
     ax.set_ylabel("Redundancy = (bp/sym − H_baseline) [bits/sym]")
     ax.grid(True, alpha=0.3)
 
     outdir.mkdir(parents=True, exist_ok=True)
-    fname = f"redundancy_vs_entropy{filename_suffix}.png"
-    out = outdir / fname
+    out = outdir / f"redundancy_vs_entropy{filename_suffix}.png"
     fig.tight_layout()
     fig.savefig(out)
     plt.show()
@@ -337,6 +588,8 @@ def main():
 
     # ---- 2) Per-model plots ----
     # We separate into 3 distribution families used in the EE:
+
+    # ---- 2) Per-model plots ----
     model_groups = ["iid_peaked", "zipf", "markov_persistent"]
 
     for model_name in model_groups:
@@ -348,7 +601,7 @@ def main():
         model_outdir = base_outdir / model_name
         model_outdir.mkdir(parents=True, exist_ok=True)
 
-        # (a) Bits/symbol vs entropy baseline for this model
+        # (a) Bits/symbol vs entropy baseline for this model (both algs together)
         plot_universal_yx(
             pts_m,
             model_outdir,
@@ -356,13 +609,20 @@ def main():
             filename_suffix=f"_{model_name}",
         )
 
-        # (b) Redundancy vs entropy baseline for this model
-        plot_redundancy(
-            pts_m,
-            model_outdir,
-            title_suffix=f"({model_name})",
-            filename_suffix=f"_{model_name}",
-        )
+        # (b) Redundancy vs entropy baseline: SEPARATE per algorithm
+        for alg in ("brotli", "lz4"):
+            pts_ma = [p for p in pts_m if p.alg == alg]
+            if not pts_ma:
+                continue
+            alg_outdir = model_outdir / alg
+            plot_redundancy_for_alg(
+                pts_ma,
+                alg,
+                alg_outdir,
+                title_suffix=f"({model_name})",
+                filename_suffix=f"_{model_name}_{alg}",
+            )
+
 
 if __name__ == "__main__":
     main()
