@@ -1,4 +1,0 @@
-file,size_bytes,unique_bytes,entropy_bpb,max_bits_bytes,eff_vs_8bit,decoded_utf8,unique_chars,entropy_bpc,max_bits_chars,eff_vs_max_chars
-letters_gaussian.txt,1025000,28,4.388998,4.807355,0.548625,True,28,4.388998,4.807355,0.912976
-letters_linear.txt,1025000,28,4.530483,4.807355,0.566310,True,28,4.530483,4.807355,0.942407
-letters_uniform.txt,1025000,28,4.775612,4.807355,0.596952,True,28,4.775612,4.807355,0.993397

@@ -40,15 +40,15 @@ runtime:
   warn_small_bytes: 10000000
 
 brotli:
-  quality: 2          # 0..11  (higher = better ratio, slower)
+  quality: 11          # 0..11  (higher = better ratio, slower)
   mode: text       # generic | text | font
   lgwin: null         # 10..24 window size as log2, or null for default
 
+lz4:
+  compression_level: 16 # 0..16 (standard levels, 0 is default)
+
 timing:
   repeats: 5          # run each measurement N times and report the median
-
-lz4:
-  compression_level: 1 # 0..16 (standard levels, 0 is default)
 
 synthetic:
   kind: zipf      # uniform | gaussian | zipf
@@ -58,3 +58,36 @@ synthetic:
     mu: 128       # for gaussian (ignored otherwise)
     sigma: 40     # for gaussian (ignored otherwise)
   seed: 123
+
+
+  ######################
+karygen:
+  out_root: "./data/kary"
+  encoding: "pack"          # "byte" (K<=256) or "pack"
+  size_bytes: 10000000
+  seeds: [123, 456]
+  overwrite: false
+
+  datasets:
+    - model: iid_peaked
+      K: 256
+      targets_bits_per_symbol: [0.5, 1.0, 2.0, 4.0, 7.5]
+      name_prefix: ""
+
+    - model: zipf
+      K: 256
+      s_values: [0.5, 0.8, 1.0, 1.2, 1.5]
+      # targets_bits_per_symbol: [2.0, 4.0, 6.0]
+      name_prefix: ""
+
+    - model: markov_persistent
+      K: 64
+      targets_bits_per_symbol: [1.0, 2.0, 3.0, 5.0]
+      name_prefix: ""
+
+    - model: histperm
+      K: 256
+      target_bits_per_symbol: 4.000
+      shape: peaked        # or "zipf"
+      orders: ["random", "blocks", "alt"]
+      name_prefix: ""

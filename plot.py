@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
+
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 
 
@@ -34,9 +36,31 @@ def ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
 
-def palette_for_qualities(qualities: List[int]) -> Dict[int, str]:
-    cmap = plt.cm.get_cmap("tab20")
-    return {q: cmap(i % 20) for i, q in enumerate(qualities)}
+def quality_cmap_norm(qualities: List[int], cmap_name: str = "cividis"):
+    """
+    Return (cmap, norm) so you can color by:  cmap(norm(q)).
+    Uses a single monotonic tonal palette across quality/level values.
+    """
+    cmap = plt.cm.get_cmap(cmap_name)
+    if not qualities:
+        return cmap, mcolors.Normalize(vmin=0, vmax=1)
+    qmin, qmax = min(qualities), max(qualities)
+    if qmin == qmax:
+        # avoid zero span when only one quality exists
+        qmin -= 0.5
+        qmax += 0.5
+    norm = mcolors.Normalize(vmin=qmin, vmax=qmax)
+    return cmap, norm
+
+
+def palette_all_qualities(qualities):
+    """Map each quality to a color on a monotonic colormap."""
+    cmap, norm = quality_cmap_norm(qualities)
+    return {q: cmap(norm(q)) for q in qualities}
+
+def palette_for_qualities(qualities):
+    # Same behavior; kept separate because both names are used.
+    return palette_all_qualities(qualities)
 
 
 def markers_for_kind(kind: str) -> str:
@@ -71,13 +95,17 @@ def parse_quality(params_json: str) -> Optional[int]:
     try:
         d = json.loads(params_json)
         if isinstance(d, dict):
-            if "quality" in d and isinstance(d["quality"], (int, float)):
-                return int(d["quality"])
-            if "compression_level" in d and isinstance(d["compression_level"], (int, float)):
-                return int(d["compression_level"])
+            for k in ("quality", "compression_level", "level", "preset", "q"):
+                if k in d:
+                    v = d[k]
+                    if isinstance(v, (int, float)):
+                        return int(v)
+                    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+                        return int(v.strip())
     except Exception:
         pass
     return None
+
 
 
 # ---------- data model ----------

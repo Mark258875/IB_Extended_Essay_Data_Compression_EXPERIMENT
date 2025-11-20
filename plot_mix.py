@@ -34,13 +34,21 @@ class Point:
     actual_bpb: float   # y-axis (computed = 8 * compressed_bytes / original_bytes)
 
 def parse_quality(params_json: str) -> Optional[int]:
+    def to_int(x) -> Optional[int]:
+        try:
+            # handle int, float, or numeric string
+            return int(float(x))
+        except Exception:
+            return None
+
     try:
         d = json.loads(params_json)
         if isinstance(d, dict):
-            if "quality" in d:
-                return int(d["quality"])
-            if "compression_level" in d:
-                return int(d["compression_level"])
+            for key in ("quality", "compression_level", "level", "preset", "acceleration"):
+                if key in d:
+                    q = to_int(d[key])
+                    if q is not None:
+                        return q
     except Exception:
         pass
     return None
