@@ -86,90 +86,195 @@ def load_results(results_csv: Path, manifest: Dict[str, dict]) -> List[Point]:
     return pts
 
 # ---------- plotting ----------
+
 def palette():
     # simple distinct colors for algs
-    return {"brotli":"C0", "lz4":"C1"}
+    return {"brotli": "navy", "lz4": "red"}
 
 def marker_for_model(m: str) -> str:
-    return {"iid_peaked":"o","zipf":"^","markov_persistent":"s","histperm":"D"}.get(m, "o")
+    return {"iid_peaked": "o", "zipf": "^", "markov_persistent": "s", "histperm": "D"}.get(m, "o")
 
-def plot_universal_yx(points: List[Point], outdir: Path, title_suffix: str="") -> None:
-    # keep only points with a baseline
+def plot_universal_yx(
+    points: List[Point],
+    outdir: Path,
+    title_suffix: str = "",
+    filename_suffix: str = "",
+) -> None:
+    """
+    Scatter: measured bits/symbol vs entropy baseline.
+    Used both globally (all models) and per-model.
+    """
     pts = [p for p in points if p.H_baseline is not None]
     if not pts:
-        print("[plot] no points with entropy baseline available.")
+        print(f"[plot] no points with entropy baseline available for {title_suffix!r}.")
         return
+
     colors = palette()
+    fig, ax = plt.subplots(figsize=(9, 6), dpi=120)
 
-    fig, ax = plt.subplots(figsize=(9,6), dpi=120)
     for p in pts:
-        ax.scatter(p.H_baseline, p.bp_per_symbol,
-                   s=50, alpha=0.9, color=colors.get(p.alg,"k"),
-                   marker=marker_for_model(p.model), label=None)
+        ax.scatter(
+            p.H_baseline,
+            p.bp_per_symbol,
+            s=50,
+            alpha=0.9,
+            color=colors.get(p.alg, "k"),
+            marker=marker_for_model(p.model),
+            label=None,
+        )
 
-    # y=x
+    # y = x theoretical limit
     m = max(max(p.H_baseline for p in pts), max(p.bp_per_symbol for p in pts))
     m *= 1.05
-    ax.plot([0,m], [0,m], "--", color="gray", alpha=0.8, linewidth=1.5, label="y = x")
+    ax.plot(
+        [0, m],
+        [0, m],
+        "--",
+        color="gray",
+        alpha=0.8,
+        linewidth=1.5,
+        label="y = x (entropy limit)",
+    )
 
     # legends
     from matplotlib.lines import Line2D
-    alg_handles = [Line2D([0],[0], marker="o", linestyle="none",
-                          markerfacecolor=colors[a], label=a.upper(), markersize=7)
-                   for a in sorted(set(p.alg for p in pts))]
-    model_handles = [Line2D([0],[0], marker=marker_for_model(m), linestyle="none",
-                            markerfacecolor="black", label=m, markersize=7)
-                     for m in sorted(set(p.model for p in pts))]
-    ax.legend(handles=alg_handles+model_handles, loc="upper center",
-              bbox_to_anchor=(0.5,-0.14), ncol=max(3, len(alg_handles)+len(model_handles)),
-              frameon=False)
+    alg_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="none",
+            markerfacecolor=colors[a],
+            label=a.upper(),
+            markersize=7,
+        )
+        for a in sorted(set(p.alg for p in pts))
+    ]
+    model_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker=marker_for_model(mname),
+            linestyle="none",
+            markerfacecolor="black",
+            label=mname,
+            markersize=7,
+        )
+        for mname in sorted(set(p.model for p in pts))
+    ]
 
-    ax.set_title(f"Bits per SYMBOL vs Entropy baseline {title_suffix}".strip())
+    ax.legend(
+        handles=alg_handles + model_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.14),
+        ncol=max(3, len(alg_handles) + len(model_handles)),
+        frameon=False,
+    )
+
+    title = "Bits per SYMBOL vs Entropy baseline"
+    if title_suffix:
+        title += f" {title_suffix}"
+    ax.set_title(title)
     ax.set_xlabel("Entropy per symbol (H_rate if available else H0) [bits/sym]")
     ax.set_ylabel("Measured bits per symbol [bits/sym]")
-    ax.set_xlim(0, m); ax.set_ylim(0, m); ax.set_aspect("equal", adjustable="box")
+    ax.set_xlim(0, m)
+    ax.set_ylim(0, m)
+    ax.set_aspect("equal", adjustable="box")
     ax.grid(True, alpha=0.3)
+
     outdir.mkdir(parents=True, exist_ok=True)
-    out = outdir / "universal_bp_per_symbol_vs_entropy.png"
-    fig.tight_layout(rect=[0,0.08,1,1]); fig.savefig(out); plt.show()
+    fname = f"bp_per_symbol_vs_entropy{filename_suffix}.png"
+    out = outdir / fname
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+    fig.savefig(out)
+    plt.show()
     print(f"[plot] {out}")
 
-def plot_redundancy(points: List[Point], outdir: Path, title_suffix: str="") -> None:
+def plot_redundancy(
+    points: List[Point],
+    outdir: Path,
+    title_suffix: str = "",
+    filename_suffix: str = "",
+) -> None:
+    """
+    Scatter: redundancy (measured − baseline) vs entropy baseline.
+    Only used per-model, not globally (to get 7 graphs total).
+    """
     pts = [p for p in points if p.H_baseline is not None and p.H_baseline > 0]
-    if not pts: return
+    if not pts:
+        print(f"[plot] no points with positive entropy baseline for {title_suffix!r}.")
+        return
+
     colors = palette()
-    fig, ax = plt.subplots(figsize=(9,6), dpi=120)
+    fig, ax = plt.subplots(figsize=(9, 6), dpi=120)
+
     for p in pts:
         gap = p.bp_per_symbol - p.H_baseline
-        ax.scatter(p.H_baseline, gap, s=50, alpha=0.9,
-                   color=colors.get(p.alg,"k"), marker=marker_for_model(p.model))
+        ax.scatter(
+            p.H_baseline,
+            gap,
+            s=50,
+            alpha=0.9,
+            color=colors.get(p.alg, "k"),
+            marker=marker_for_model(p.model),
+        )
+
     ax.axhline(0.0, linestyle="--", color="gray", alpha=0.7)
-    ax.set_title(f"Redundancy vs Entropy baseline {title_suffix}".strip())
+    title = "Redundancy vs Entropy baseline"
+    if title_suffix:
+        title += f" {title_suffix}"
+    ax.set_title(title)
     ax.set_xlabel("Entropy per symbol (H_rate if available else H0) [bits/sym]")
     ax.set_ylabel("Redundancy = (bp/sym − H_baseline) [bits/sym]")
     ax.grid(True, alpha=0.3)
+
     outdir.mkdir(parents=True, exist_ok=True)
-    out = outdir / "redundancy_vs_entropy.png"
-    fig.tight_layout(); fig.savefig(out); plt.show()
+    fname = f"redundancy_vs_entropy{filename_suffix}.png"
+    out = outdir / fname
+    fig.tight_layout()
+    fig.savefig(out)
+    plt.show()
     print(f"[plot] {out}")
 
 # ---------- CLI ----------
-# ---------- CLI ----------
+
 def main():
-    ap = argparse.ArgumentParser(description="Plot universal per-symbol graphs for k-ary generated sources.")
+    ap = argparse.ArgumentParser(
+        description="Plot universal per-symbol graphs for k-ary generated sources."
+    )
     ap.add_argument("--config", type=Path, default=Path("conf") / "config.yaml")
-    ap.add_argument("--manifest", type=Path, default=None,
-                    help="Override manifest path; by default uses karygen.out_root/manifest.csv")
+    ap.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="Override manifest path; by default uses karygen.out_root/manifest.csv",
+    )
 
     # Which results to include (default: both if neither is specified)
-    ap.add_argument("-b", "--brotli", action="store_true",
-                    help="Use Brotli results (results/results_brotli.csv).")
-    ap.add_argument("-l", "--lz4", action="store_true",
-                    help="Use LZ4 results (results/results_lz4.csv).")
+    ap.add_argument(
+        "-b",
+        "--brotli",
+        action="store_true",
+        help="Use Brotli results (results/results_brotli.csv).",
+    )
+    ap.add_argument(
+        "-l",
+        "--lz4",
+        action="store_true",
+        help="Use LZ4 results (results/results_lz4.csv).",
+    )
 
     # Where the result files are
-    ap.add_argument("--results-brotli", type=Path, default=Path("results") / "results_brotli.csv")
-    ap.add_argument("--results-lz4", type=Path, default=Path("results") / "results_lz4.csv")
+    ap.add_argument(
+        "--results-brotli",
+        type=Path,
+        default=Path("results") / "results_brotli.csv",
+    )
+    ap.add_argument(
+        "--results-lz4",
+        type=Path,
+        default=Path("results") / "results_lz4.csv",
+    )
 
     args = ap.parse_args()
 
@@ -193,7 +298,7 @@ def main():
     manifest = load_manifest(args.manifest)
 
     # Accumulate points from the selected result files
-    points = []
+    points: List[Point] = []
 
     if args.brotli:
         if args.results_brotli.exists():
@@ -212,16 +317,52 @@ def main():
             print(f"[warn] LZ4 results not found: {args.results_lz4}")
 
     if not points:
-        print("[plot] no joined points; manifest present but no results rows matched. "
-              "Make sure the 'dataset' in results_* matches manifest 'path'.")
+        print(
+            "[plot] no joined points; manifest present but no results rows matched. "
+            "Make sure the 'dataset' in results_* matches manifest 'path'."
+        )
         return
 
-    outdir = Path("plots") / "kary"
-    outdir.mkdir(parents=True, exist_ok=True)
+    base_outdir = Path("plots") / "kary"
+    base_outdir.mkdir(parents=True, exist_ok=True)
 
-    # Your existing plotting functions
-    plot_universal_yx(points, outdir)
-    plot_redundancy(points, outdir)
+    # ---- 1) Global plot with all models: bits/symbol vs entropy baseline ----
+    # This is the "one where are all where is theoretical limit of compression".
+    plot_universal_yx(
+        points,
+        base_outdir,
+        title_suffix="(all models)",
+        filename_suffix="_all_models",
+    )
+
+    # ---- 2) Per-model plots ----
+    # We separate into 3 distribution families used in the EE:
+    model_groups = ["iid_peaked", "zipf", "markov_persistent"]
+
+    for model_name in model_groups:
+        pts_m = [p for p in points if p.model == model_name]
+        if not pts_m:
+            print(f"[plot] no points for model {model_name!r}; skipping.")
+            continue
+
+        model_outdir = base_outdir / model_name
+        model_outdir.mkdir(parents=True, exist_ok=True)
+
+        # (a) Bits/symbol vs entropy baseline for this model
+        plot_universal_yx(
+            pts_m,
+            model_outdir,
+            title_suffix=f"({model_name})",
+            filename_suffix=f"_{model_name}",
+        )
+
+        # (b) Redundancy vs entropy baseline for this model
+        plot_redundancy(
+            pts_m,
+            model_outdir,
+            title_suffix=f"({model_name})",
+            filename_suffix=f"_{model_name}",
+        )
 
 if __name__ == "__main__":
     main()
