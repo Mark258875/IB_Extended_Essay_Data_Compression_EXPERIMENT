@@ -5,8 +5,8 @@ paths:
     #- "./data/binary/**/*.bin"   # bitpack
     
     #RANDOM
-    # - "./data/binary/ascii01/p0.*/*_random_*B.txt"
-    # - "./data/binary/bitpack/p0.*/*_random_*B.bin"
+     - "./data/binary/ascii01/p0.*/*_random_*B.txt"
+     - "./data/binary/bitpack/p0.*/*_random_*B.bin"
     
     #KARY:
     #-  "./data/kary/**/*.bin"
