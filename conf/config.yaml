@@ -3,11 +3,31 @@ paths:
     #- "./data/*.txt"
     #- "./data/binary/**/*.txt"   # ascii01
     #- "./data/binary/**/*.bin"   # bitpack
-    #- "./data/enwik9"
-    - "./data/binary/ascii01/p0.*/*_random_*B.txt"
-    - "./data/binary/bitpack/p0.*/*_random_*B.bin"
+    
+    #RANDOM
+     - "./data/binary/ascii01/p0.*/*_random_*B.txt"
+     - "./data/binary/bitpack/p0.*/*_random_*B.bin"
+    
+    #KARY:
     #-  "./data/kary/**/*.bin"
 
+
+    #SEQ: 
+    # - "./data/binary/ascii01/p0.*/*_alternating_*B.txt"
+    # - "./data/binary/ascii01/p0.*/*_blocks_*B.txt"
+    # - "./data/binary/bitpack/p0.*/*_alternating_*B.bin"
+    # - "./data/binary/bitpack/p0.*/*_blocks_*B.bin"
+
+    #standard Corpora: 
+    #- "./data/standard_corpora/Calgary corpus/*"
+    
+    #- "./data/standard_corpora/Canterbury corpus/*"
+    
+    #- "./data/standard_corpora/Silesia corpus/*"
+
+    #- "./data/enwik9"
+    #- "./data/binary/ascii01/p0.*/*_random_*B.txt"
+    #- "./data/binary/bitpack/p0.*/*_random_*B.bin"
 
   output_dir: "./results"
   output_filename: "results.csv" # funguje na tom este MAIN.PY

@@ -164,7 +164,8 @@ def run_one(dataset_label: str, data: bytes, alg: str, args):
 
 
     compressed = len(last_comp)
-    ratio = compressed / original if original else 0.0
+    #ratio = compressed / original if original else 0.0
+    ratio = compressed/original
     bpb = 8.0 * ratio if original else 0.0
     over = ((bpb - H) / H * 100.0) if H > 0 else None
     comp_MB_s = (original / MB) / ct_med if ct_med > 0 else float("inf")

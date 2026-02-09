@@ -10,7 +10,6 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import yaml
 
-
 # ---- style config ----
 COLORMAP = "cividis"  # single tonal map for quality
 
@@ -47,7 +46,6 @@ def parse_quality(params_json: str) -> Optional[int]:
     return None
 
 
-
 @dataclass
 class Point:
     path: str
@@ -82,29 +80,41 @@ def palette_for_quality(qualities: List[int], q_min: int = 0, q_max: int = 16):
     return cmap, norm
 
 
+def marker_for_alg(alg: str) -> str:
+    """Different marker shapes for algorithms."""
+    a = alg.lower()
+    if a == "brotli":
+        return "o"   # circle
+    if a == "lz4":
+        return "^"   # triangle
+    return "s"       # fallback
+
+
 def load_results(results_csv: Path, manifest: Dict[str, dict]) -> List[Point]:
     pts: List[Point] = []
+    if not results_csv.exists():
+        return pts
     with results_csv.open("r", encoding="utf-8", newline="") as f:
         r = csv.DictReader(f)
         for row in r:
-            path = norm(row.get("dataset",""))
+            path = norm(row.get("dataset", ""))
             if path not in manifest:
-                # allow relative/absolute mismatches by trying basename match
-                # fall back: skip
+                # allow relative/absolute mismatches by trying basename match?
+                # (you can add that if needed) – for now: strict match
                 continue
             mf = manifest[path]
             try:
                 n_symbols = int(mf["n_symbols"])
                 comp_bytes = int(row["compressed_bytes"])
                 alg = row["alg"].lower()
-                quality = parse_quality(row.get("params",""))
-                comp_MB_s = float(row.get("comp_MB_s","nan"))
+                quality = parse_quality(row.get("params", ""))
+                comp_MB_s = float(row.get("comp_MB_s", "nan"))
                 # measured bits per symbol
                 bp_sym = (comp_bytes * 8.0) / n_symbols if n_symbols > 0 else float("nan")
                 K = int(mf["K"])
                 model = str(mf["model"])
-                H0 = float(mf["measured_H0_bits_per_symbol"]) if mf.get("measured_H0_bits_per_symbol","") else None
-                Hrate = float(mf["measured_Hrate_bits_per_symbol"]) if mf.get("measured_Hrate_bits_per_symbol","") else None
+                H0 = float(mf["measured_H0_bits_per_symbol"]) if mf.get("measured_H0_bits_per_symbol", "") else None
+                Hrate = float(mf["measured_Hrate_bits_per_symbol"]) if mf.get("measured_Hrate_bits_per_symbol", "") else None
                 pts.append(Point(
                     path=path, alg=alg, quality=quality, K=K, model=model,
                     n_symbols=n_symbols, comp_bytes=comp_bytes, comp_MB_s=comp_MB_s,
@@ -114,53 +124,7 @@ def load_results(results_csv: Path, manifest: Dict[str, dict]) -> List[Point]:
                 continue
     return pts
 
-
-def quality_cmap_norm(qualities: List[int], cmap_name: str = "cividis"):
-    """
-    Return (cmap, norm) so you can color by: cmap(norm(q)).
-    Uses a single monotonic tonal palette across quality values.
-    """
-    cmap = plt.cm.get_cmap(cmap_name)
-    if not qualities:
-        return cmap, mcolors.Normalize(vmin=0, vmax=1)
-    qmin, qmax = min(qualities), max(qualities)
-    if qmin == qmax:
-        # avoid zero span when only one quality exists
-        qmin -= 0.5
-        qmax += 0.5
-    norm = mcolors.Normalize(vmin=qmin, vmax=qmax)
-    return cmap, norm
-
-
-def quality_palette(points: List[Point]):
-    """
-    Build a mapping {quality -> color} and return (colors, sorted_qualities).
-    Only considers points with a non-None quality.
-    """
-    qualities = sorted({p.quality for p in points if p.quality is not None})
-    cmap, norm = quality_cmap_norm(qualities)
-    colors = {q: cmap(norm(q)) for q in qualities}
-    return colors, qualities
-
-
-def marker_for_alg(alg: str) -> str:
-    """Different marker shapes for algorithms."""
-    a = alg.lower()
-    if a == "brotli":
-        return "o"  # circle
-    if a == "lz4":
-        return "^"  # triangle
-    return "s"      # square for anything else
-
 # ---------- plotting ----------
-
-def palette():
-    # simple distinct colors for algs
-    return {"brotli": "navy", "lz4": "red"}
-
-def marker_for_model(m: str) -> str:
-    return {"iid_peaked": "o", "zipf": "^", "markov_persistent": "s", "histperm": "D"}.get(m, "o")
-
 
 def plot_universal_yx(
     points: List[Point],
@@ -252,137 +216,6 @@ def plot_universal_yx(
     plt.show()
     print(f"[plot] {out}")
 
-def plot_redundancy(
-    points: List[Point],
-    outdir: Path,
-    title_suffix: str = "",
-    filename_suffix: str = "",
-) -> None:
-    pts = [p for p in points if p.H_baseline is not None and p.H_baseline > 0]
-    if not pts:
-        print("[plot] no points with positive entropy baseline.")
-        return
-
-    # color mapping for quality
-    qualities = sorted({p.quality for p in pts if p.quality is not None})
-    cmap, norm = palette_for_quality(qualities, q_min=0, q_max=16)
-
-    fig, ax = plt.subplots(figsize=(9, 6), dpi=120)
-
-    # group for trend-line computation
-    by_alg: Dict[str, List[tuple]] = defaultdict(list)
-
-    # scatter: color = quality, marker = algorithm
-    for p in pts:
-        gap = p.bp_per_symbol - p.H_baseline
-        color = cmap(norm(p.quality)) if p.quality is not None else (0.5, 0.5, 0.5, 0.8)
-        marker = marker_for_alg(p.alg)
-
-        ax.scatter(
-            p.H_baseline,
-            gap,
-            s=55,
-            alpha=0.95,
-            color=color,
-            marker=marker,
-            edgecolor="none",
-        )
-
-        by_alg[p.alg].append((p.H_baseline, gap, p.quality))
-
-    # horizontal zero line (ideal = no redundancy)
-    ax.axhline(0.0, linestyle="--", color="gray", alpha=0.7)
-
-    # trend-line colors (you can tweak these)
-    trend_colors = {
-        "brotli": "navy",
-        "lz4": "red",
-    }
-
-    # --- trend lines only for highest quality per algorithm ---
-    for alg, rows in by_alg.items():
-        q_vals = [q for (_, _, q) in rows if q is not None]
-        if not q_vals:
-            continue
-        max_q = max(q_vals)  # should be 11 for Brotli, 16 for LZ4 in your setup
-
-        xs = np.array([H for (H, gap, q) in rows if q == max_q])
-        ys = np.array([gap for (H, gap, q) in rows if q == max_q])
-
-        if len(xs) < 2:
-            continue  # not enough points to fit a line
-
-        m, b = np.polyfit(xs, ys, deg=1)  # slope, intercept
-        x_line = np.linspace(xs.min(), xs.max(), 100)
-        y_line = m * x_line + b
-
-        color = trend_colors.get(alg, "black")
-        ax.plot(
-            x_line,
-            y_line,
-            linestyle="-",
-            linewidth=1.5,
-            color=color,
-            alpha=0.9,
-        )
-
-        # label next to the line: "trend line Brotli (q=11)" etc.
-        x_label = x_line[int(len(x_line) * 0.7)]
-        y_label = m * x_label + b
-        ax.text(
-            x_label,
-            y_label,
-            f"trend line {alg.upper()} (q={max_q})",
-            fontsize=8,
-            color=color,
-            ha="left",
-            va="center",
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7),
-        )
-
-    # legend ONLY for algorithms (shapes)
-    from matplotlib.lines import Line2D
-    algs = sorted(set(p.alg for p in pts))
-    alg_handles = [
-        Line2D(
-            [0],
-            [0],
-            marker=marker_for_alg(a),
-            linestyle="none",
-            markerfacecolor="white",
-            markeredgecolor="black",
-            label=a.upper(),
-            markersize=8,
-        )
-        for a in algs
-    ]
-    if alg_handles:
-        ax.legend(
-            handles=alg_handles,
-            title="Algorithm (marker)",
-            loc="upper left",
-            frameon=False,
-        )
-
-    # colorbar for quality
-    if qualities:
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        sm.set_array([])
-        cbar = fig.colorbar(sm, ax=ax, pad=0.02)
-        cbar.set_label("quality")
-
-    ax.set_title(f"Redundancy vs Entropy baseline {title_suffix}".strip())
-    ax.set_xlabel("Entropy per symbol (H_rate if available else H0) [bits/sym]")
-    ax.set_ylabel("Redundancy = (bp/sym − H_baseline) [bits/sym]")
-    ax.grid(True, alpha=0.3)
-    outdir.mkdir(parents=True, exist_ok=True)
-    out = outdir / f"redundancy_vs_entropy{filename_suffix}.png"
-    fig.tight_layout()
-    fig.savefig(out)
-    plt.show()
-    print(f"[plot] {out}")
-
-import numpy as np
 
 def plot_redundancy_for_alg(
     points: List[Point],
@@ -397,7 +230,7 @@ def plot_redundancy_for_alg(
     - trend line only for highest quality of this algorithm
     - label includes the line equation R = m H + b
     """
-    pts = [p for p in points if p.H_baseline is not None and p.H_baseline > 0]
+    pts = [p for p in points if p.alg == alg and p.H_baseline is not None and p.H_baseline > 0]
     if not pts:
         print(f"[plot] no points with positive entropy baseline for {alg}.")
         return
@@ -430,7 +263,7 @@ def plot_redundancy_for_alg(
     # --- trend line only for highest quality of this algorithm ---
     q_vals = [p.quality for p in pts if p.quality is not None]
     if q_vals:
-        max_q = max(q_vals)  # should be 11 for Brotli, 16 for LZ4 given your setup
+        max_q = max(q_vals)  # typically 11 for Brotli, 16 for LZ4
 
         xs = np.array([p.H_baseline for p in pts if p.quality == max_q])
         ys = np.array([p.bp_per_symbol - p.H_baseline for p in pts if p.quality == max_q])
@@ -487,6 +320,7 @@ def plot_redundancy_for_alg(
     plt.show()
     print(f"[plot] {out}")
 
+
 # ---------- CLI ----------
 
 def main():
@@ -506,25 +340,25 @@ def main():
         "-b",
         "--brotli",
         action="store_true",
-        help="Use Brotli results (results/results_brotli.csv).",
+        help="Use Brotli results (results/kary/results_brotli.csv).",
     )
     ap.add_argument(
         "-l",
         "--lz4",
         action="store_true",
-        help="Use LZ4 results (results/results_lz4.csv).",
+        help="Use LZ4 results (results/kary/results_lz4.csv).",
     )
 
-    # Where the result files are
+    # Where the result files are (NOTE: now hard-coded for k-ary subfolder)
     ap.add_argument(
         "--results-brotli",
         type=Path,
-        default=Path("results") / "results_brotli.csv",
+        default=Path("results") / "kary" / "results_brotli.csv",
     )
     ap.add_argument(
         "--results-lz4",
         type=Path,
-        default=Path("results") / "results_lz4.csv",
+        default=Path("results") / "kary" / "results_lz4.csv",
     )
 
     args = ap.parse_args()
@@ -578,16 +412,12 @@ def main():
     base_outdir.mkdir(parents=True, exist_ok=True)
 
     # ---- 1) Global plot with all models: bits/symbol vs entropy baseline ----
-    # This is the "one where are all where is theoretical limit of compression".
     plot_universal_yx(
         points,
         base_outdir,
         title_suffix="(all models)",
         filename_suffix="_all_models",
     )
-
-    # ---- 2) Per-model plots ----
-    # We separate into 3 distribution families used in the EE:
 
     # ---- 2) Per-model plots ----
     model_groups = ["iid_peaked", "zipf", "markov_persistent"]

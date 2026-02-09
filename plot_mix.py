@@ -17,8 +17,12 @@ import matplotlib.colors as mcolors
 COLORMAP = "cividis"
 
 # Up to 5 distinct files => 5 marker shapes
-MARKERS = ["o", "s", "D", "^", "v"]
-
+MARKERS = [
+    "o", "s", "D", "^", "v", "<", ">", "p", "*", "h", "H", "X", "P", "d",
+    "8",  # octagon
+    # backups (not strictly "filled" but still distinct and visible)
+    "1", "2", "3", "4"   # tri-down, tri-up, tri-left, tri-right
+]
 
 # ----------------- data model / parsing -----------------
 
